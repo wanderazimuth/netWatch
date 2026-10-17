@@ -72,6 +72,13 @@ def cmd_label(cfg, conn, args) -> None:
     print("labelled" if cur.rowcount else f"unknown MAC {args.mac}")
 
 
+def cmd_web(cfg, conn, args) -> None:
+    from . import web
+
+    conn.close()  # the server opens a connection per request
+    web.serve(cfg.db_path, args.host, args.port)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="netwatch", description="Watch devices join and leave the network.")
     parser.add_argument("-c", "--config", default="/etc/netwatch/config.toml")
@@ -87,6 +94,10 @@ def main() -> None:
     p.add_argument("mac")
     p.add_argument("name")
     p.set_defaults(func=cmd_label)
+    p = sub.add_parser("web", help="serve the web dashboard")
+    p.add_argument("--host", default="0.0.0.0")
+    p.add_argument("--port", type=int, default=8080)
+    p.set_defaults(func=cmd_web)
     args = parser.parse_args()
 
     logging.basicConfig(

@@ -19,3 +19,6 @@ netwatch = "netwatch.__main__:main"
 
 [tool.setuptools]
 packages = ["netwatch"]
+
+[tool.setuptools.package-data]
+netwatch = ["static/*"]

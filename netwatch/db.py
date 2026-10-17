@@ -29,8 +29,10 @@ CREATE INDEX IF NOT EXISTS events_ts ON events(ts);
 def connect(path: str | Path) -> sqlite3.Connection:
     if str(path) != ":memory:":
         Path(path).parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(path)
+    conn = sqlite3.connect(path, timeout=5)
     conn.row_factory = sqlite3.Row
+    # WAL lets the dashboard read while the scanner writes.
+    conn.execute("PRAGMA journal_mode=WAL")
     conn.executescript(SCHEMA)
     return conn
 

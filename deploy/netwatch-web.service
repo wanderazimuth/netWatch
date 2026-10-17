@@ -1,0 +1,29 @@
+[Unit]
+Description=NetWatch web dashboard
+After=network-online.target netwatch.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=netwatch
+Group=netwatch
+WorkingDirectory=/opt/netwatch
+ExecStart=/opt/netwatch/.venv/bin/python -m netwatch --config /etc/netwatch/config.toml web --port 8080
+Restart=on-failure
+RestartSec=10
+
+# Serves the database only -- needs no special capabilities.
+CapabilityBoundingSet=
+NoNewPrivileges=true
+
+StateDirectory=netwatch
+Environment=HOME=/var/lib/netwatch
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+
+MemoryMax=100M
+CPUQuota=25%
+
+[Install]
+WantedBy=multi-user.target

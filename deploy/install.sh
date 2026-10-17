@@ -24,8 +24,10 @@ if [[ ! -f $CONF_DIR/config.toml ]]; then
     echo "created $CONF_DIR/config.toml -- review it before starting"
 fi
 
-install -m 644 "$APP_DIR/deploy/netwatch.service" /etc/systemd/system/netwatch.service
+for unit in netwatch netwatch-web; do
+    install -m 644 "$APP_DIR/deploy/$unit.service" "/etc/systemd/system/$unit.service"
+done
 systemctl daemon-reload
-systemctl enable netwatch
-systemctl restart netwatch
-systemctl --no-pager status netwatch
+systemctl enable netwatch netwatch-web
+systemctl restart netwatch netwatch-web
+systemctl --no-pager status netwatch netwatch-web
