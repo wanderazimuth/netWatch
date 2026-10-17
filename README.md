@@ -52,6 +52,12 @@ the LAN can view it and rename devices, so don't expose port 8080 to the interne
 
 The device page's **Pause internet** button blocks every DNS lookup from that
 device through Pi-hole, for 30 min / 1 h / 2 h / until 7:00 / until you resume.
+
+The button only appears on devices listed by MAC in `pausable` in the
+`[pihole]` config section, and the server refuses to pause anything else. Since
+anyone on the LAN can use the dashboard, this keeps them from pausing your own
+devices, the Pi or the router. With no list, nothing can be paused. Resume
+always works.
 NetWatch creates a Pi-hole group, "NetWatch paused", with a block-everything
 regex rule (`.*`), and points a client entry for the device's IP at it. Resume
 puts back whatever client entry that IP had before. Timed pauses end on their

@@ -43,7 +43,7 @@ BLOCKED = {
 DOWN_AFTER_MIN, DOWN_AFTER_MAX = 2, 7 * 24 * 60
 
 
-def device_json(r) -> dict:
+def device_json(r, pausable: frozenset[str] = frozenset()) -> dict:
     return {
         "mac": r["mac"],
         "ip": r["ip"],
@@ -61,12 +61,13 @@ def device_json(r) -> dict:
         "down": r["down_since"] is not None,
         "paused": r["paused_ip"] is not None,
         "paused_until": r["paused_until"],
+        "pausable": r["mac"] in pausable,
         "randomized": is_randomized_mac(r["mac"]),
     }
 
 
-def devices_json(conn) -> list[dict]:
-    return [device_json(r) for r in conn.execute("SELECT * FROM devices")]
+def devices_json(conn, pausable: frozenset[str] = frozenset()) -> list[dict]:
+    return [device_json(r, pausable) for r in conn.execute("SELECT * FROM devices")]
 
 
 def events_json(conn, limit: int, mac: str | None = None) -> list[dict]:
@@ -134,6 +135,7 @@ def make_handler(db_path: str, ntfy_url: str = "", dashboard_url: str = "",
                  pihole: PiholeConfig | None = None, offline_after: int = 600):
     static = resources.files("netwatch").joinpath("static")
     index_html = static.joinpath("index.html").read_bytes()
+    pausable = frozenset(pihole.pausable) if pihole is not None else frozenset()
     favicon = static.joinpath("favicon.svg").read_bytes()
 
     class Handler(BaseHTTPRequestHandler):
@@ -167,7 +169,7 @@ def make_handler(db_path: str, ntfy_url: str = "", dashboard_url: str = "",
                 conn = db.connect(db_path)
                 try:
                     if url.path == "/api/devices":
-                        return self._json({"now": int(time.time()), "devices": devices_json(conn)})
+                        return self._json({"now": int(time.time()), "devices": devices_json(conn, pausable)})
                     limit = int(parse_qs(url.query).get("limit", ["100"])[0])
                     return self._json({"events": events_json(conn, min(max(limit, 1), 1000))})
                 finally:
@@ -191,7 +193,7 @@ def make_handler(db_path: str, ntfy_url: str = "", dashboard_url: str = "",
                 since = min(max(since, now - MAX_HISTORY), now)
                 return self._json({
                     "now": now,
-                    "device": device_json(row),
+                    "device": device_json(row, pausable),
                     "history": online_spans(conn, mac, since, now, offline_after),
                     "events": events_json(conn, 100, mac),
                 })
@@ -224,6 +226,9 @@ def make_handler(db_path: str, ntfy_url: str = "", dashboard_url: str = "",
         def _pause(self, conn, mac: str, action: str, body: dict):
             if pihole is None:
                 return self._json({"error": "Pi-hole isn't set up in config.toml"}, 409)
+            # Resuming only puts things back, so it's always allowed.
+            if action == "pause" and mac not in pausable:
+                return self._json({"error": "this device isn't in the pausable list in config.toml"}, 403)
             until, now = body.get("until"), int(time.time())
             if action == "pause" and until is not None and not (
                 isinstance(until, int) and not isinstance(until, bool) and now < until <= now + MAX_PAUSE
@@ -244,7 +249,7 @@ def make_handler(db_path: str, ntfy_url: str = "", dashboard_url: str = "",
                 return self._json({"error": f"Pi-hole {action} failed: {e}"}, 502)
             pause_mod.touch(pihole.sync_trigger)
             row = conn.execute("SELECT * FROM devices WHERE mac = ?", (mac,)).fetchone()
-            return self._json({"ok": True, "device": device_json(row)})
+            return self._json({"ok": True, "device": device_json(row, pausable)})
 
         def do_POST(self):
             path = urlparse(self.path).path

@@ -574,7 +574,6 @@ async function loadSettings() {
   try {
     settings = await fetch("/api/settings").then((r) => r.json());
     renderSettings();
-    renderDetail();  // the pause button depends on pihole_configured
   } catch (e) { /* refresh() reports connectivity problems */ }
 }
 
@@ -725,7 +724,7 @@ function renderDetail() {
     : !d.online ? "Offline: last seen " + ago(d.last_seen)
     : last && last[1] === h.end && last[0] > h.start ? "Online since " + fullTime(last[0])
     : "Online");
-  $("d-actions").replaceChildren(...(settings && settings.pihole_configured ? [pauseButton(d)] : []), bellButton(d), sirenButton(d));
+  $("d-actions").replaceChildren(...(d.pausable || d.paused ? [pauseButton(d)] : []), bellButton(d), sirenButton(d));
 
   const facts = [
     ["IP address", d.ip, "mono"],

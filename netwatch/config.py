@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 if sys.version_info >= (3, 11):
@@ -17,6 +17,9 @@ class PiholeConfig:
     # Touched whenever NetWatch changes Pi-hole (pausing a device), so a systemd
     # path unit can copy the change to a replica Pi-hole right away.
     sync_trigger: str = ""
+    # MACs of the only devices the dashboard may pause. Kept here rather than in
+    # the dashboard so nobody on the LAN can widen it. Empty = pausing is off.
+    pausable: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -49,6 +52,7 @@ def load(path: str | Path) -> Config:
     config = Config(**raw)
     if pihole is not None:
         config.pihole = PiholeConfig(**pihole)
+        config.pihole.pausable = [m.strip().lower().replace("-", ":") for m in config.pihole.pausable]
     if deco is not None:
         config.deco = DecoConfig(**deco)
     if config.offline_after <= config.scan_interval:

@@ -6,12 +6,14 @@ import unittest
 import urllib.error
 import urllib.request
 from http.server import ThreadingHTTPServer
+from types import SimpleNamespace
 
 from netwatch import db, web
 from netwatch.scanner import Sighting
 from netwatch.tracker import apply_scan
 
 TV = "00:11:22:33:44:55"
+OTHER = "00:11:22:33:44:66"
 
 
 class WebTest(unittest.TestCase):
@@ -116,6 +118,26 @@ class WebTest(unittest.TestCase):
         self.assertEqual(self.post(f"/api/devices/{TV}/resume", {}), 409)
         self.assertFalse(json.loads(self.get("/api/settings")[1])["pihole_configured"])
         self.assertFalse(json.loads(self.get("/api/devices")[1])["devices"][0]["paused"])
+
+    def test_only_pausable_devices_can_be_paused(self):
+        # A Pi-hole nobody listens on: a listed device gets past the check and then fails to connect.
+        pihole = SimpleNamespace(url="http://127.0.0.1:9", password="", sync_trigger="", pausable=[TV])
+        server = ThreadingHTTPServer(("127.0.0.1", 0), web.make_handler(self.db_path, pihole=pihole))
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        base, self.base = self.base, f"http://127.0.0.1:{server.server_port}"
+        try:
+            conn = db.connect(self.db_path)
+            apply_scan(conn, [Sighting(TV, "192.168.0.20"), Sighting(OTHER, "192.168.0.30")], 1060, 600)
+            conn.close()
+            devices = {d["mac"]: d["pausable"] for d in json.loads(self.get("/api/devices")[1])["devices"]}
+            self.assertEqual(devices, {TV: True, OTHER: False})
+            self.assertEqual(self.post(f"/api/devices/{OTHER}/pause", {"until": None}), 403)
+            self.assertEqual(self.post(f"/api/devices/{TV}/pause", {"until": None}), 502)
+            self.assertEqual(self.post(f"/api/devices/{OTHER}/resume", {}), 200)  # resume is never refused
+        finally:
+            self.base = base
 
     def test_test_notification_needs_ntfy(self):
         self.assertEqual(self.post("/api/test-notification", {}), 409)
