@@ -218,3 +218,8 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# NetWatch: local config holds secrets (Pi-hole password, ntfy topic); device data stays off GitHub
+config.toml
+*.db
+*.db-journal

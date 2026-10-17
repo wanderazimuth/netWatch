@@ -1,0 +1,32 @@
+[Unit]
+Description=NetWatch network device monitor
+After=network-online.target pihole-FTL.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=netwatch
+Group=netwatch
+WorkingDirectory=/opt/netwatch
+ExecStart=/opt/netwatch/.venv/bin/python -m netwatch --config /etc/netwatch/config.toml run
+Restart=on-failure
+RestartSec=10
+
+# Raw ARP frames need CAP_NET_RAW -- grant only that instead of running as root.
+AmbientCapabilities=CAP_NET_RAW
+CapabilityBoundingSet=CAP_NET_RAW
+NoNewPrivileges=true
+
+# Creates /var/lib/netwatch owned by the service user; everything else is read-only.
+StateDirectory=netwatch
+Environment=HOME=/var/lib/netwatch
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+
+# Keep a misbehaving scanner from starving Pi-hole.
+MemoryMax=200M
+CPUQuota=50%
+
+[Install]
+WantedBy=multi-user.target

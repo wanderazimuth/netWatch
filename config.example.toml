@@ -1,0 +1,26 @@
+# Copy to /etc/netwatch/config.toml on the Pi (or ./config.toml for local runs).
+# config.toml is gitignored -- never commit the real one.
+
+# Interface and subnet to ARP-scan. Use the wired interface; the Pi is also
+# on wlan0 in the same subnet, and scanning both would double-count devices.
+interface = "eth0"
+network = "192.168.0.0/24"
+
+# Seconds between scans.
+scan_interval = 60
+
+# A device is marked offline after it has been unseen this long. Phones drop
+# off Wi-Fi when asleep, so keep this well above scan_interval.
+offline_after = 600
+
+db_path = "/var/lib/netwatch/netwatch.db"
+
+# Optional push notifications via ntfy (https://ntfy.sh). Use a long random
+# topic name -- anyone who knows it can read your alerts.
+# ntfy_url = "https://ntfy.sh/netwatch-change-me-to-something-random"
+
+# Optional: pull hostnames and vendors from Pi-hole's v6 API.
+# Create an app password in Pi-hole: Settings > Web interface / API > Configure app password.
+# [pihole]
+# url = "http://127.0.0.1"
+# password = "app-password-here"
