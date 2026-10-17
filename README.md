@@ -16,7 +16,8 @@ netwatch/
   info.py      merges device details from the Deco and Pi-hole
   tracker.py   scan results -> device state + events (pure logic, unit-tested)
   db.py        SQLite schema
-  notify.py    log + ntfy alerts
+  notify.py    log + ntfy alerts (what to push, quiet hours, grouping)
+  settings.py  alert settings stored in SQLite, edited from the dashboard
   web.py       dashboard server (stdlib only) + JSON API
   static/      dashboard page
   __main__.py  CLI: run | scan | devices | events | label | web
@@ -43,6 +44,23 @@ Update later with `cd /opt/netwatch && sudo git pull && sudo bash deploy/install
 http://192.168.0.10:8080 -- live device list (search, filter, sort), activity
 feed, and click-to-rename. Refreshes every 30 s. There is no login: anyone on
 the LAN can view it and rename devices, so don't expose port 8080 to the internet.
+
+## Alerts
+
+Push notifications go through [ntfy](https://ntfy.sh): set `ntfy_url` (a long,
+random topic -- anyone who knows it can read your alerts) in
+`/etc/netwatch/config.toml`, install the ntfy app, and subscribe to that topic.
+
+What gets pushed is controlled from the dashboard's **Alerts** button, no SSH needed:
+
+- **Push alerts** -- master on/off switch (events are still logged either way)
+- **New devices**, optionally skipping private-MAC devices (rotating phone MACs)
+- **Arrivals & departures** of devices you've marked with the row's bell
+- **Snooze** for 1 / 8 / 24 hours
+- **Quiet hours** -- deliver silently, or don't send at all
+- **Send test notification**
+
+Several changes in one scan arrive as one notification, not a burst.
 
 ## Command line
 

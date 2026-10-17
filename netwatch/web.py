@@ -14,12 +14,13 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib import resources
 from urllib.parse import parse_qs, urlparse
 
-from . import db
+from . import db, notify
+from . import settings as settings_mod
 from .scanner import is_randomized_mac
 
 log = logging.getLogger(__name__)
 
-LABEL_PATH = re.compile(r"/api/devices/([0-9a-f]{2}(?::[0-9a-f]{2}){5})/label")
+DEVICE_PATH = re.compile(r"/api/devices/([0-9a-f]{2}(?::[0-9a-f]{2}){5})/(label|notify)")
 
 
 def devices_json(conn) -> list[dict]:
@@ -36,6 +37,7 @@ def devices_json(conn) -> list[dict]:
             "first_seen": r["first_seen"],
             "last_seen": r["last_seen"],
             "online": bool(r["online"]),
+            "notify": bool(r["notify"]),
             "randomized": is_randomized_mac(r["mac"]),
         }
         for r in rows
@@ -51,7 +53,7 @@ def events_json(conn, limit: int) -> list[dict]:
     return [{"ts": r["ts"], "kind": r["kind"], "ip": r["event_ip"], "mac": r["mac"], "name": db.display_name(r)} for r in rows]
 
 
-def make_handler(db_path: str):
+def make_handler(db_path: str, ntfy_url: str = "", dashboard_url: str = ""):
     static = resources.files("netwatch").joinpath("static")
     index_html = static.joinpath("index.html").read_bytes()
     favicon = static.joinpath("favicon.svg").read_bytes()
@@ -77,6 +79,12 @@ def make_handler(db_path: str):
             # Browsers also probe /favicon.ico (e.g. for bookmarks); modern ones accept SVG there.
             if url.path in ("/favicon.svg", "/favicon.ico"):
                 return self._send(200, favicon, "image/svg+xml", cache="max-age=86400")
+            if url.path == "/api/settings":
+                conn = db.connect(db_path)
+                try:
+                    return self._json(self._settings(conn))
+                finally:
+                    conn.close()
             if url.path in ("/api/devices", "/api/events"):
                 conn = db.connect(db_path)
                 try:
@@ -88,28 +96,58 @@ def make_handler(db_path: str):
                     conn.close()
             self._json({"error": "not found"}, 404)
 
+        def _settings(self, conn) -> dict:
+            return {**settings_mod.load(conn), "ntfy_configured": bool(ntfy_url), "now": int(time.time())}
+
         def do_POST(self):
-            m = LABEL_PATH.fullmatch(urlparse(self.path).path)
-            if not m:
-                return self._json({"error": "not found"}, 404)
+            path = urlparse(self.path).path
             # Requiring JSON forces a CORS preflight for cross-site requests, which we
-            # never approve -- so other websites can't relabel devices via your browser.
+            # never approve -- so other websites can't change anything via your browser.
             if self.headers.get("Content-Type", "").split(";")[0] != "application/json":
                 return self._json({"error": "expected application/json"}, 415)
             try:
-                body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))))
-                label = (body.get("label") or "").strip()[:64] or None
-            except (ValueError, AttributeError):
+                body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))) or b"{}")
+                if not isinstance(body, dict):
+                    raise ValueError
+            except ValueError:
                 return self._json({"error": "bad request"}, 400)
+
+            if path == "/api/test-notification":
+                if not ntfy_url:
+                    return self._json({"error": "ntfy_url is not set in config.toml"}, 409)
+                try:
+                    notify.push(ntfy_url, "NetWatch test", "Alerts are working.", tags="white_check_mark",
+                                click=dashboard_url)
+                except Exception as e:
+                    return self._json({"error": f"ntfy push failed: {e}"}, 502)
+                return self._json({"ok": True})
+
             conn = db.connect(db_path)
             try:
-                cur = conn.execute("UPDATE devices SET label = ? WHERE mac = ?", (label, m.group(1)))
+                if path == "/api/settings":
+                    try:
+                        settings_mod.save(conn, body)
+                    except ValueError as e:
+                        return self._json({"error": str(e)}, 400)
+                    return self._json(self._settings(conn))
+
+                m = DEVICE_PATH.fullmatch(path)
+                if not m:
+                    return self._json({"error": "not found"}, 404)
+                mac, field = m.groups()
+                if field == "label":
+                    value = (body.get("label") or "").strip()[:64] or None
+                    cur = conn.execute("UPDATE devices SET label = ? WHERE mac = ?", (value, mac))
+                else:
+                    if not isinstance(body.get("notify"), bool):
+                        return self._json({"error": "notify must be true or false"}, 400)
+                    cur = conn.execute("UPDATE devices SET notify = ? WHERE mac = ?", (int(body["notify"]), mac))
                 conn.commit()
+                if not cur.rowcount:
+                    return self._json({"error": "unknown device"}, 404)
+                return self._json({"ok": True})
             finally:
                 conn.close()
-            if not cur.rowcount:
-                return self._json({"error": "unknown device"}, 404)
-            self._json({"ok": True})
 
         def log_message(self, fmt, *args):
             log.debug("%s %s", self.address_string(), fmt % args)
@@ -117,7 +155,7 @@ def make_handler(db_path: str):
     return Handler
 
 
-def serve(db_path: str, host: str, port: int) -> None:
-    server = ThreadingHTTPServer((host, port), make_handler(db_path))
+def serve(db_path: str, host: str, port: int, ntfy_url: str = "", dashboard_url: str = "") -> None:
+    server = ThreadingHTTPServer((host, port), make_handler(db_path, ntfy_url, dashboard_url))
     log.info("dashboard on http://%s:%d", host, port)
     server.serve_forever()

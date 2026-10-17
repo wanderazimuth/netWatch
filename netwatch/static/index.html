@@ -29,7 +29,7 @@
   .stat { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; }
   .stat .v { font-size: 26px; font-weight: 650; font-variant-numeric: tabular-nums; }
   .stat .k { color: var(--muted); font-size: 12px; }
-  .layout { display: grid; grid-template-columns: 1fr 320px; gap: 16px; align-items: start; }
+  .layout { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 16px; align-items: start; }
   .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 14px; min-width: 0; }
   .toolbar { display: flex; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
   input[type=search] { flex: 1; min-width: 160px; padding: 7px 10px; border: 1px solid var(--border); border-radius: 7px;
@@ -37,6 +37,7 @@
   .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 7px; overflow: hidden; }
   .seg button { border: 0; background: transparent; color: var(--muted); padding: 7px 12px; font: inherit; cursor: pointer; }
   .seg button.active { background: var(--accent); color: #fff; }
+  .table-wrap { overflow-x: auto; }
   table { width: 100%; border-collapse: collapse; }
   th { text-align: left; font-size: 12px; color: var(--muted); font-weight: 600; padding: 6px 8px;
        border-bottom: 1px solid var(--border); cursor: pointer; user-select: none; white-space: nowrap; }
@@ -64,8 +65,41 @@
   .k-new .ic { color: var(--new); } .k-online .ic { color: var(--on); } .k-offline .ic { color: var(--off); } .k-ip_change .ic { color: var(--accent); }
   .empty { color: var(--muted); padding: 16px 0; text-align: center; }
   .error { background: #c0392b; color: #fff; padding: 8px 12px; border-radius: 7px; margin-top: 12px; display: none; }
+  .head-right { display: flex; align-items: center; gap: 12px; }
+  .pill { border: 1px solid var(--border); background: var(--panel); color: var(--text); border-radius: 999px;
+          padding: 5px 12px; font: inherit; font-size: 13px; cursor: pointer; }
+  .pill.off { color: var(--muted); }
+  .pill.snoozed { border-color: var(--new); color: var(--new); }
+  .bell { border: 0; background: none; cursor: pointer; font-size: 15px; padding: 2px 4px; filter: grayscale(1); opacity: .3; }
+  .bell:hover { opacity: .7; }
+  .bell.on { filter: none; opacity: 1; }
+  dialog { border: 1px solid var(--border); border-radius: 12px; background: var(--panel); color: var(--text);
+           padding: 0; width: min(440px, calc(100vw - 32px)); }
+  dialog::backdrop { background: rgb(0 0 0 / .45); }
+  .dlg-head { display: flex; justify-content: space-between; align-items: center; padding: 14px 18px; border-bottom: 1px solid var(--border); }
+  .dlg-head h2 { margin: 0; color: var(--text); text-transform: none; letter-spacing: 0; font-size: 16px; }
+  .dlg-body { padding: 6px 18px 18px; }
+  .group { padding: 12px 0; border-bottom: 1px solid var(--border); }
+  .group:last-child { border-bottom: 0; }
+  .group h3 { margin: 0 0 8px; font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+  .row { display: flex; align-items: flex-start; gap: 10px; padding: 5px 0; cursor: pointer; }
+  .row input[type=checkbox] { margin-top: 3px; accent-color: var(--accent); width: 16px; height: 16px; }
+  .row.indent { padding-left: 26px; }
+  .row.disabled { opacity: .45; pointer-events: none; }
+  .hint { color: var(--muted); font-size: 12px; }
+  .btns { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+  .btn { border: 1px solid var(--border); background: var(--bg); color: var(--text); border-radius: 7px; padding: 6px 12px;
+         font: inherit; cursor: pointer; }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .btn:disabled { opacity: .5; cursor: default; }
+  .x { border: 0; background: none; color: var(--muted); font-size: 20px; cursor: pointer; line-height: 1; }
+  input[type=time], select { font: inherit; padding: 5px 8px; border: 1px solid var(--border); border-radius: 7px;
+                             background: var(--bg); color: var(--text); }
+  .status { font-size: 12px; margin-top: 6px; min-height: 1.2em; }
+  .warn { background: color-mix(in srgb, var(--new) 15%, transparent); border: 1px solid var(--new); border-radius: 8px;
+          padding: 8px 10px; font-size: 13px; margin-top: 12px; }
   @media (max-width: 900px) {
-    .layout { grid-template-columns: 1fr; }
+    .layout { grid-template-columns: minmax(0, 1fr); }
     .stats { grid-template-columns: repeat(2, 1fr); }
     .hide-sm { display: none; }
   }
@@ -75,7 +109,10 @@
 <main>
   <header>
     <h1>NetWatch</h1>
-    <span class="updated" id="updated">Loading…</span>
+    <div class="head-right">
+      <span class="updated" id="updated">Loading…</span>
+      <button class="pill" id="alerts-pill" title="Alert settings">🔔 Alerts</button>
+    </div>
   </header>
   <div class="error" id="error"></div>
 
@@ -96,6 +133,7 @@
           <button data-f="offline">Offline</button>
         </div>
       </div>
+      <div class="table-wrap">
       <table>
         <thead><tr>
           <th data-k="online" style="width:28px"></th>
@@ -104,9 +142,11 @@
           <th data-k="mac" class="hide-sm">MAC</th>
           <th data-k="first_seen" class="hide-sm">First seen</th>
           <th data-k="last_seen">Last seen</th>
+          <th data-k="notify" title="Alert me when this device arrives or leaves" style="width:36px">🔔</th>
         </tr></thead>
         <tbody id="rows"></tbody>
       </table>
+      </div>
       <div class="empty" id="empty" hidden>No devices match.</div>
     </section>
 
@@ -117,13 +157,76 @@
   </div>
 </main>
 
+<dialog id="alerts">
+  <div class="dlg-head">
+    <h2>Alerts</h2>
+    <button class="x" id="alerts-close" aria-label="Close">×</button>
+  </div>
+  <div class="dlg-body">
+    <div class="warn" id="ntfy-missing" hidden>
+      Push alerts aren't set up: add <code>ntfy_url</code> to <code>/etc/netwatch/config.toml</code> on the Pi.
+      These settings still save.
+    </div>
+    <div class="group">
+      <label class="row"><input type="checkbox" data-s="enabled">
+        <span><strong>Push alerts</strong><div class="hint">Master switch. Everything is still logged in Activity.</div></span></label>
+    </div>
+    <div class="group" id="what">
+      <h3>Alert me about</h3>
+      <label class="row"><input type="checkbox" data-s="new_devices">
+        <span>New devices<div class="hint">A device NetWatch has never seen joins the network.</div></span></label>
+      <label class="row indent"><input type="checkbox" data-s="private_macs">
+        <span>Include private-MAC devices<div class="hint">Phones with Wi-Fi privacy on can rotate their MAC and show up as "new" again.</div></span></label>
+      <label class="row"><input type="checkbox" data-s="watched">
+        <span>Arrivals &amp; departures of 🔔 devices<div class="hint">Click the bell on a device row to watch it. <span id="watch-count"></span></div></span></label>
+    </div>
+    <div class="group">
+      <h3>Snooze</h3>
+      <div class="btns">
+        <button class="btn" data-snooze="3600">1 hour</button>
+        <button class="btn" data-snooze="28800">8 hours</button>
+        <button class="btn" data-snooze="86400">24 hours</button>
+        <button class="btn" data-snooze="0" id="resume" hidden>Resume now</button>
+      </div>
+      <div class="status hint" id="snooze-status"></div>
+    </div>
+    <div class="group">
+      <h3>Quiet hours</h3>
+      <div class="btns">
+        <input type="time" id="quiet-start" aria-label="Quiet hours start"> to
+        <input type="time" id="quiet-end" aria-label="Quiet hours end">
+        <select id="quiet-mode" aria-label="During quiet hours">
+          <option value="silent">send silently</option>
+          <option value="skip">don't send</option>
+        </select>
+        <button class="btn" id="quiet-clear">Clear</button>
+      </div>
+      <div class="hint" style="margin-top:6px">Uses the Pi's clock. "Silently" still delivers, without sound or vibration.</div>
+    </div>
+    <div class="group">
+      <div class="btns">
+        <button class="btn primary" id="test-btn">Send test notification</button>
+        <span class="status" id="test-status"></span>
+      </div>
+      <div class="status hint" id="save-status"></div>
+    </div>
+  </div>
+</dialog>
+
 <script>
 const $ = (id) => document.getElementById(id);
 const DAY = 86400;
 const ICONS = { new: "★", online: "▲", offline: "▼", ip_change: "⇄" };
 const VERBS = { new: "joined for the first time", online: "came online", offline: "went offline", ip_change: "changed IP to" };
 
-let devices = [], serverNow = 0, filter = "all", sortKey = "ip", sortAsc = true, editing = null;
+let devices = [], serverNow = 0, filter = "all", sortKey = "ip", sortAsc = true, editing = null, settings = null;
+
+async function post(url, body) {
+  const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data.error || "HTTP " + r.status);
+  return data;
+}
 
 function el(tag, props = {}, ...children) {
   const n = document.createElement(tag);
@@ -181,6 +284,7 @@ function renderDevices() {
       el("td", { className: "mono hide-sm", textContent: d.mac }),
       el("td", { className: "hide-sm", textContent: ago(d.first_seen), title: fullTime(d.first_seen) }),
       el("td", { textContent: d.online ? "now" : ago(d.last_seen), title: fullTime(d.last_seen) }),
+      el("td", {}, bellButton(d)),
     );
   }));
   $("empty").hidden = list.length > 0;
@@ -189,6 +293,22 @@ function renderDevices() {
     th.classList.toggle("sorted", th.dataset.k === sortKey);
     th.classList.toggle("asc", th.dataset.k === sortKey && sortAsc);
   });
+}
+
+function bellButton(d) {
+  const b = el("button", {
+    className: "bell" + (d.notify ? " on" : ""), textContent: "🔔",
+    title: d.notify ? "Watching: you'll be alerted when it arrives or leaves. Click to stop." : "Alert me when this device arrives or leaves",
+  });
+  b.onclick = async () => {
+    try {
+      await post(`/api/devices/${d.mac}/notify`, { notify: !d.notify });
+      d.notify = !d.notify;
+      renderDevices();
+      renderSettings();
+    } catch (e) { showError("Couldn't change alert: " + e.message); }
+  };
+  return b;
 }
 
 function startEdit(cell, d) {
@@ -254,6 +374,80 @@ async function refresh() {
   }
 }
 
+// ---- alert settings
+function renderPill() {
+  const pill = $("alerts-pill");
+  if (!settings) return;
+  const snoozed = settings.snooze_until > Date.now() / 1000;
+  pill.className = "pill" + (!settings.enabled ? " off" : snoozed ? " snoozed" : "");
+  pill.textContent = !settings.enabled ? "🔕 Alerts off"
+    : snoozed ? "💤 Snoozed until " + new Date(settings.snooze_until * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
+    : !settings.ntfy_configured ? "🔔 Alerts not set up" : "🔔 Alerts on";
+}
+
+function renderSettings() {
+  if (!settings) return;
+  document.querySelectorAll("[data-s]").forEach((cb) => { cb.checked = settings[cb.dataset.s]; });
+  $("what").querySelectorAll(".row").forEach((r) => r.classList.toggle("disabled", !settings.enabled));
+  $("what").querySelector(".indent").classList.toggle("disabled", !settings.enabled || !settings.new_devices);
+  const watching = devices.filter((d) => d.notify).length;
+  $("watch-count").textContent = watching ? `Watching ${watching} device${watching > 1 ? "s" : ""}.` : "None watched yet.";
+  const snoozed = settings.snooze_until > Date.now() / 1000;
+  $("snooze-status").textContent = snoozed ? "Snoozed until " + fullTime(settings.snooze_until) : "";
+  $("resume").hidden = !snoozed;
+  $("quiet-start").value = settings.quiet_start;
+  $("quiet-end").value = settings.quiet_end;
+  $("quiet-mode").value = settings.quiet_mode;
+  $("ntfy-missing").hidden = settings.ntfy_configured;
+  $("test-btn").disabled = !settings.ntfy_configured;
+  renderPill();
+}
+
+let saveTimer;
+async function saveSettings(updates) {
+  try {
+    settings = await post("/api/settings", updates);
+    $("save-status").textContent = "Saved ✓";
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => { $("save-status").textContent = ""; }, 1500);
+  } catch (e) {
+    $("save-status").textContent = "Not saved: " + e.message;
+  }
+  renderSettings();
+}
+
+async function loadSettings() {
+  // Don't overwrite the form while it's open and being edited.
+  if ($("alerts").open && settings) return;
+  try {
+    settings = await fetch("/api/settings").then((r) => r.json());
+    renderSettings();
+  } catch (e) { /* refresh() reports connectivity problems */ }
+}
+
+document.querySelectorAll("[data-s]").forEach((cb) => cb.onchange = () => saveSettings({ [cb.dataset.s]: cb.checked }));
+document.querySelectorAll("[data-snooze]").forEach((b) => b.onclick = () => {
+  const secs = Number(b.dataset.snooze);
+  saveSettings({ snooze_until: secs ? Math.floor(Date.now() / 1000) + secs : 0 });
+});
+const saveQuiet = () => {
+  const start = $("quiet-start").value, end = $("quiet-end").value;
+  if (!!start !== !!end) return;  // wait until both are filled in
+  saveSettings({ quiet_start: start, quiet_end: end, quiet_mode: $("quiet-mode").value });
+};
+$("quiet-start").onchange = saveQuiet;
+$("quiet-end").onchange = saveQuiet;
+$("quiet-mode").onchange = saveQuiet;
+$("quiet-clear").onclick = () => saveSettings({ quiet_start: "", quiet_end: "" });
+$("test-btn").onclick = async () => {
+  $("test-status").textContent = "Sending…";
+  try { await post("/api/test-notification", {}); $("test-status").textContent = "Sent. Check your phone."; }
+  catch (e) { $("test-status").textContent = e.message; }
+};
+$("alerts-pill").onclick = () => { renderSettings(); $("alerts").showModal(); };
+$("alerts-close").onclick = () => $("alerts").close();
+$("alerts").onclick = (e) => { if (e.target === $("alerts")) $("alerts").close(); };  // click outside closes
+
 $("q").oninput = renderDevices;
 $("filter").onclick = (e) => {
   if (!e.target.dataset.f) return;
@@ -267,8 +461,8 @@ document.querySelectorAll("th").forEach((th) => th.onclick = () => {
   renderDevices();
 });
 
-refresh();
-setInterval(refresh, 30000);
+refresh().then(loadSettings);
+setInterval(() => { refresh(); loadSettings(); }, 30000);
 </script>
 </body>
 </html>

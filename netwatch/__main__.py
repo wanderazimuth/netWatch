@@ -50,7 +50,7 @@ def cmd_run(cfg, conn, args) -> None:
     while True:
         started = time.monotonic()
         try:
-            notify.send(scan_once(cfg, conn, deco), cfg.ntfy_url)
+            notify.send(scan_once(cfg, conn, deco), conn, cfg.ntfy_url, cfg.dashboard_url)
         except Exception:
             log.exception("scan failed")
         time.sleep(max(0.0, cfg.scan_interval - (time.monotonic() - started)))
@@ -94,7 +94,7 @@ def cmd_web(cfg, conn, args) -> None:
     from . import web
 
     conn.close()  # the server opens a connection per request
-    web.serve(cfg.db_path, args.host, args.port)
+    web.serve(cfg.db_path, args.host, args.port, cfg.ntfy_url, cfg.dashboard_url)
 
 
 def main() -> None:

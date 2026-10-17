@@ -18,6 +18,7 @@ class Event:
     mac: str
     ip: str | None
     name: str
+    connection: str | None = None
 
 
 def apply_scan(
@@ -42,7 +43,7 @@ def apply_scan(
                 " VALUES (?, ?, ?, ?, ?, ?, ?, 1)",
                 (s.mac, s.ip, extra.hostname, extra.vendor, extra.connection, now, now),
             )
-            events.append(Event("new", s.mac, s.ip, extra.hostname or extra.vendor or s.mac))
+            events.append(Event("new", s.mac, s.ip, extra.hostname or extra.vendor or s.mac, extra.connection))
             continue
 
         name = row["label"] or extra.hostname or row["hostname"] or extra.vendor or row["vendor"] or s.mac

@@ -16,8 +16,10 @@ offline_after = 600
 db_path = "/var/lib/netwatch/netwatch.db"
 
 # Optional push notifications via ntfy (https://ntfy.sh). Use a long random
-# topic name -- anyone who knows it can read your alerts.
+# topic name -- anyone who knows it can read your alerts. Which events are
+# pushed (and snooze / quiet hours) is set from the dashboard's Alerts panel.
 # ntfy_url = "https://ntfy.sh/netwatch-change-me-to-something-random"
+# dashboard_url = "http://192.168.0.10:8080"   # opened when you tap an alert
 
 # Optional: pull device names and connection type (wired / 2.4 / 5 GHz) from a
 # TP-Link Deco mesh. Uses the Deco's unofficial local API. The password is the

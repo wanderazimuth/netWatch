@@ -69,6 +69,23 @@ class WebTest(unittest.TestCase):
         self.assertEqual(self.post(f"/api/devices/{TV}/label", {"label": "x"}, "text/plain"), 415)
         self.assertEqual(self.post("/api/devices/aa:aa:aa:aa:aa:aa/label", {"label": "x"}), 404)
 
+    def test_settings_roundtrip(self):
+        s = json.loads(self.get("/api/settings")[1])
+        self.assertTrue(s["enabled"])
+        self.assertFalse(s["ntfy_configured"])
+        self.assertEqual(self.post("/api/settings", {"enabled": False, "quiet_start": "22:00", "quiet_end": "07:00"}), 200)
+        s = json.loads(self.get("/api/settings")[1])
+        self.assertEqual((s["enabled"], s["quiet_start"]), (False, "22:00"))
+        self.assertEqual(self.post("/api/settings", {"quiet_start": "nope"}), 400)
+
+    def test_notify_toggle(self):
+        self.assertEqual(self.post(f"/api/devices/{TV}/notify", {"notify": True}), 200)
+        self.assertTrue(json.loads(self.get("/api/devices")[1])["devices"][0]["notify"])
+        self.assertEqual(self.post(f"/api/devices/{TV}/notify", {"notify": "yes"}), 400)
+
+    def test_test_notification_needs_ntfy(self):
+        self.assertEqual(self.post("/api/test-notification", {}), 409)
+
     def test_favicon(self):
         status, body = self.get("/favicon.svg")
         self.assertEqual(status, 200)

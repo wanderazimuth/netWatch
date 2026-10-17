@@ -33,6 +33,7 @@ class Config:
     offline_after: int = 600
     db_path: str = "/var/lib/netwatch/netwatch.db"
     ntfy_url: str = ""
+    dashboard_url: str = ""  # tapping an alert opens this
     pihole: PiholeConfig | None = None
     deco: DecoConfig | None = None
 
