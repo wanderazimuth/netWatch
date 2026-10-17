@@ -56,6 +56,10 @@ What gets pushed is controlled from the dashboard's **Alerts** button, no SSH ne
 - **Push alerts** -- master on/off switch (events are still logged either way)
 - **New devices**, optionally skipping private-MAC devices (rotating phone MACs)
 - **Arrivals & departures** of devices you've marked with the row's bell
+- **Offline alerts**: click a row's 🚨 to pick a time (5 min to 24 h). If the device
+  isn't seen for that long you get one high-priority alert, then another when it's
+  back. Meant for always-on devices like the NAS or cameras; devices that are down
+  show a red dot on the dashboard
 - **Snooze** for 1 / 8 / 24 hours
 - **Quiet hours** -- deliver silently, or don't send at all
 - **Send test notification**

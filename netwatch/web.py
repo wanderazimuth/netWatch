@@ -20,7 +20,10 @@ from .scanner import is_randomized_mac
 
 log = logging.getLogger(__name__)
 
-DEVICE_PATH = re.compile(r"/api/devices/([0-9a-f]{2}(?::[0-9a-f]{2}){5})/(label|notify)")
+DEVICE_PATH = re.compile(r"/api/devices/([0-9a-f]{2}(?::[0-9a-f]{2}){5})/(label|notify|down_after)")
+# Offline-alert thresholds, in minutes. Scans run every minute, so anything
+# shorter than a couple of minutes would fire on a single missed reply.
+DOWN_AFTER_MIN, DOWN_AFTER_MAX = 2, 7 * 24 * 60
 
 
 def devices_json(conn) -> list[dict]:
@@ -38,6 +41,8 @@ def devices_json(conn) -> list[dict]:
             "last_seen": r["last_seen"],
             "online": bool(r["online"]),
             "notify": bool(r["notify"]),
+            "down_after": r["down_after"],
+            "down": r["down_since"] is not None,
             "randomized": is_randomized_mac(r["mac"]),
         }
         for r in rows
@@ -138,6 +143,16 @@ def make_handler(db_path: str, ntfy_url: str = "", dashboard_url: str = ""):
                 if field == "label":
                     value = (body.get("label") or "").strip()[:64] or None
                     cur = conn.execute("UPDATE devices SET label = ? WHERE mac = ?", (value, mac))
+                elif field == "down_after":
+                    minutes = body.get("minutes")
+                    if minutes is not None and not (
+                        isinstance(minutes, int) and not isinstance(minutes, bool)
+                        and DOWN_AFTER_MIN <= minutes <= DOWN_AFTER_MAX
+                    ):
+                        return self._json({"error": f"minutes must be {DOWN_AFTER_MIN}-{DOWN_AFTER_MAX} or null"}, 400)
+                    # Changing the threshold re-arms the alert: a device that's still
+                    # gone gets a fresh "down" alert on the next scan if it qualifies.
+                    cur = conn.execute("UPDATE devices SET down_after = ?, down_since = NULL WHERE mac = ?", (minutes, mac))
                 else:
                     if not isinstance(body.get("notify"), bool):
                         return self._json({"error": "notify must be true or false"}, 400)

@@ -12,6 +12,8 @@ CREATE TABLE IF NOT EXISTS devices (
     connection TEXT,              -- from the Deco: wired / 2.4 GHz / 5 GHz ...
     label      TEXT,              -- your own name for the device, set via `netwatch label`
     notify     INTEGER NOT NULL DEFAULT 0,  -- 1 = push when it comes online / goes offline
+    down_after INTEGER,           -- minutes unseen before a "device down" alert; NULL = off
+    down_since INTEGER,           -- last_seen when the down alert fired; NULL = not alerted
     first_seen INTEGER NOT NULL,  -- unix seconds
     last_seen  INTEGER NOT NULL,
     online     INTEGER NOT NULL DEFAULT 1
@@ -36,6 +38,8 @@ CREATE TABLE IF NOT EXISTS settings (
 ADDED_COLUMNS = {
     "connection": "TEXT",
     "notify": "INTEGER NOT NULL DEFAULT 0",
+    "down_after": "INTEGER",
+    "down_since": "INTEGER",
 }
 
 

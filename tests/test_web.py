@@ -83,6 +83,16 @@ class WebTest(unittest.TestCase):
         self.assertTrue(json.loads(self.get("/api/devices")[1])["devices"][0]["notify"])
         self.assertEqual(self.post(f"/api/devices/{TV}/notify", {"notify": "yes"}), 400)
 
+    def test_down_after(self):
+        device = lambda: json.loads(self.get("/api/devices")[1])["devices"][0]
+        self.assertEqual((device()["down_after"], device()["down"]), (None, False))
+        self.assertEqual(self.post(f"/api/devices/{TV}/down_after", {"minutes": 15}), 200)
+        self.assertEqual(device()["down_after"], 15)
+        for bad in (1, 99999, "15", True):
+            self.assertEqual(self.post(f"/api/devices/{TV}/down_after", {"minutes": bad}), 400, bad)
+        self.assertEqual(self.post(f"/api/devices/{TV}/down_after", {"minutes": None}), 200)
+        self.assertIsNone(device()["down_after"])
+
     def test_test_notification_needs_ntfy(self):
         self.assertEqual(self.post("/api/test-notification", {}), 409)
 

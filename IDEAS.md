@@ -5,8 +5,7 @@ people build with similar tools (NetAlertX / Pi.Alert, WatchYourLAN, Fing).
 
 ## Next up (best value for the effort)
 
-1. **Offline alerts for chosen devices.** "The NAS / camera / Pi hasn't been
-   seen in 15 minutes." Reuses the existing bells, watched devices and ntfy.
+1. ~~**Offline alerts for chosen devices.**~~ Done: the 🚨 column on the dashboard.
 2. **Per-device detail page.** First/last seen, online history, which Deco
    (Upstairs/Basement) it's on, and its top DNS lookups from Pi-hole.
 3. **"Pause internet" button.** Move a device into a blocking Pi-hole group.

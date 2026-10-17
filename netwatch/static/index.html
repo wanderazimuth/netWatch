@@ -9,12 +9,12 @@
   :root {
     color-scheme: light dark;
     --bg: #f6f7f9; --panel: #ffffff; --text: #1d2330; --muted: #6b7385; --border: #e3e6ec;
-    --accent: #2f6fde; --on: #1f9d55; --off: #a0a7b5; --new: #d97706; --row-hover: #f1f4f9;
+    --accent: #2f6fde; --on: #1f9d55; --off: #a0a7b5; --new: #d97706; --down: #d93025; --row-hover: #f1f4f9;
   }
   @media (prefers-color-scheme: dark) {
     :root {
       --bg: #12151b; --panel: #1a1e26; --text: #e4e7ee; --muted: #8b93a5; --border: #2a303b;
-      --accent: #6b9cff; --on: #3ccf7a; --off: #5b6372; --new: #f5a524; --row-hover: #212632;
+      --accent: #6b9cff; --on: #3ccf7a; --off: #5b6372; --new: #f5a524; --down: #ff6b5e; --row-hover: #212632;
     }
   }
   * { box-sizing: border-box; }
@@ -49,12 +49,14 @@
   .mono { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font-size: 12.5px; }
   .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: var(--off); }
   .dot.on { background: var(--on); box-shadow: 0 0 0 3px color-mix(in srgb, var(--on) 20%, transparent); }
+  .dot.down { background: var(--down); box-shadow: 0 0 0 3px color-mix(in srgb, var(--down) 25%, transparent); }
   .name { cursor: text; border-bottom: 1px dashed transparent; }
   .name:hover { border-bottom-color: var(--muted); }
   .sub { color: var(--muted); font-size: 12px; }
   .tag { display: inline-block; font-size: 11px; padding: 0 6px; border-radius: 4px; margin-left: 6px;
          border: 1px solid var(--border); color: var(--muted); }
   .tag.new { border-color: var(--new); color: var(--new); }
+  .tag.down { border-color: var(--down); color: var(--down); }
   .tag.conn { border-color: transparent; background: var(--row-hover); }
   .name-input { font: inherit; padding: 3px 6px; width: 100%; max-width: 240px; border: 1px solid var(--accent);
                 border-radius: 5px; background: var(--bg); color: var(--text); }
@@ -73,6 +75,8 @@
   .bell { border: 0; background: none; cursor: pointer; font-size: 15px; padding: 2px 4px; filter: grayscale(1); opacity: .3; }
   .bell:hover { opacity: .7; }
   .bell.on { filter: none; opacity: 1; }
+  .siren { white-space: nowrap; font-size: 13px; }
+  .siren.on { color: var(--text); }
   dialog { border: 1px solid var(--border); border-radius: 12px; background: var(--panel); color: var(--text);
            padding: 0; width: min(440px, calc(100vw - 32px)); }
   dialog::backdrop { background: rgb(0 0 0 / .45); }
@@ -143,6 +147,7 @@
           <th data-k="first_seen" class="hide-sm">First seen</th>
           <th data-k="last_seen">Last seen</th>
           <th data-k="notify" title="Alert me when this device arrives or leaves" style="width:36px">🔔</th>
+          <th data-k="down_after" title="Alert me if this device stays offline" style="width:64px">🚨</th>
         </tr></thead>
         <tbody id="rows"></tbody>
       </table>
@@ -179,6 +184,8 @@
         <span>Include private-MAC devices<div class="hint">Phones with Wi-Fi privacy on can rotate their MAC and show up as "new" again.</div></span></label>
       <label class="row"><input type="checkbox" data-s="watched">
         <span>Arrivals &amp; departures of 🔔 devices<div class="hint">Click the bell on a device row to watch it. <span id="watch-count"></span></div></span></label>
+      <label class="row"><input type="checkbox" data-s="down_alerts">
+        <span>🚨 Offline alerts<div class="hint">A device you've set a 🚨 time on hasn't answered for that long, and again when it's back. Sent at high priority. <span id="down-count"></span></div></span></label>
     </div>
     <div class="group">
       <h3>Snooze</h3>
@@ -210,6 +217,30 @@
       </div>
       <div class="status hint" id="save-status"></div>
     </div>
+  </div>
+</dialog>
+
+<dialog id="down-dlg">
+  <div class="dlg-head">
+    <h2>Offline alert</h2>
+    <button class="x" id="down-close" aria-label="Close">×</button>
+  </div>
+  <div class="dlg-body">
+    <p>Alert me if <strong id="down-name"></strong> hasn't been seen for</p>
+    <div class="btns">
+      <select id="down-minutes" aria-label="Offline for">
+        <option value="">Off</option>
+        <option value="5">5 minutes</option>
+        <option value="15">15 minutes</option>
+        <option value="30">30 minutes</option>
+        <option value="60">1 hour</option>
+        <option value="240">4 hours</option>
+        <option value="1440">24 hours</option>
+      </select>
+      <button class="btn primary" id="down-save">Save</button>
+    </div>
+    <div class="hint" style="margin-top:8px">For always-on devices like the NAS, cameras or printers. You get one alert when it goes quiet and one when it's back.</div>
+    <div class="status" id="down-status"></div>
   </div>
 </dialog>
 
@@ -251,6 +282,7 @@ function ipNum(ip) {
 
 function compare(a, b) {
   let x = a[sortKey], y = b[sortKey];
+  if (sortKey === "down_after") { x = x ?? Infinity; y = y ?? Infinity; }
   if (sortKey === "ip") { x = ipNum(x); y = ipNum(y); }
   if (sortKey === "name") { x = x.toLowerCase(); y = y.toLowerCase(); }
   if (x < y) return sortAsc ? -1 : 1;
@@ -272,19 +304,21 @@ function renderDevices() {
       el("span", { className: "name", textContent: d.name, title: "Click to rename" }),
       d.connection ? el("span", { className: "tag conn", textContent: d.connection }) : null,
       serverNow - d.first_seen < DAY ? el("span", { className: "tag new", textContent: "new" }) : null,
+      d.down ? el("span", { className: "tag down", textContent: "down", title: "No reply for longer than its offline alert time" }) : null,
       d.randomized ? el("span", { className: "tag", textContent: "private MAC", title: "Randomized MAC — likely a phone or laptop with Wi-Fi privacy on" }) : null,
       d.label && (d.hostname || d.vendor) ? el("div", { className: "sub", textContent: d.hostname || d.vendor }) : null,
       !d.label && d.hostname && d.vendor ? el("div", { className: "sub", textContent: d.vendor }) : null,
     );
     nameCell.querySelector(".name").onclick = () => startEdit(nameCell, d);
     return el("tr", { className: d.online ? "" : "offline" },
-      el("td", {}, el("span", { className: "dot" + (d.online ? " on" : ""), title: d.online ? "Online" : "Offline" })),
+      el("td", {}, el("span", { className: "dot" + (d.down ? " down" : d.online ? " on" : ""), title: d.down ? "Down" : d.online ? "Online" : "Offline" })),
       nameCell,
       el("td", { className: "mono", textContent: d.ip || "" }),
       el("td", { className: "mono hide-sm", textContent: d.mac }),
       el("td", { className: "hide-sm", textContent: ago(d.first_seen), title: fullTime(d.first_seen) }),
       el("td", { textContent: d.online ? "now" : ago(d.last_seen), title: fullTime(d.last_seen) }),
       el("td", {}, bellButton(d)),
+      el("td", {}, sirenButton(d)),
     );
   }));
   $("empty").hidden = list.length > 0;
@@ -310,6 +344,42 @@ function bellButton(d) {
   };
   return b;
 }
+
+const shortMinutes = (m) => m % 60 ? m + "m" : m / 60 + "h";
+
+function sirenButton(d) {
+  const on = d.down_after != null;
+  const b = el("button", {
+    className: "bell siren" + (on ? " on" : ""), textContent: on ? "🚨 " + shortMinutes(d.down_after) : "🚨",
+    title: on ? `Alerts if offline for ${d.down_after} min. Click to change.` : "Alert me if this device stays offline",
+  });
+  b.onclick = () => openDownDialog(d);
+  return b;
+}
+
+let downDevice = null;
+function openDownDialog(d) {
+  downDevice = d;
+  $("down-name").textContent = d.name;
+  const sel = $("down-minutes"), value = d.down_after == null ? "" : String(d.down_after);
+  if (![...sel.options].some((o) => o.value === value)) sel.add(el("option", { value, textContent: d.down_after + " minutes" }));
+  sel.value = value;
+  $("down-status").textContent = "";
+  $("down-dlg").showModal();
+}
+$("down-save").onclick = async () => {
+  const v = $("down-minutes").value, d = downDevice;
+  try {
+    await post(`/api/devices/${d.mac}/down_after`, { minutes: v ? Number(v) : null });
+    d.down_after = v ? Number(v) : null;
+    d.down = false;
+    $("down-dlg").close();
+    renderDevices();
+    renderSettings();
+  } catch (e) { $("down-status").textContent = "Not saved: " + e.message; }
+};
+$("down-close").onclick = () => $("down-dlg").close();
+$("down-dlg").onclick = (e) => { if (e.target === $("down-dlg")) $("down-dlg").close(); };
 
 function startEdit(cell, d) {
   editing = d.mac;
@@ -392,6 +462,8 @@ function renderSettings() {
   $("what").querySelector(".indent").classList.toggle("disabled", !settings.enabled || !settings.new_devices);
   const watching = devices.filter((d) => d.notify).length;
   $("watch-count").textContent = watching ? `Watching ${watching} device${watching > 1 ? "s" : ""}.` : "None watched yet.";
+  const guarded = devices.filter((d) => d.down_after != null).length;
+  $("down-count").textContent = guarded ? `Set on ${guarded} device${guarded > 1 ? "s" : ""}.` : "None set yet.";
   const snoozed = settings.snooze_until > Date.now() / 1000;
   $("snooze-status").textContent = snoozed ? "Snoozed until " + fullTime(settings.snooze_until) : "";
   $("resume").hidden = !snoozed;

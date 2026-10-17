@@ -39,7 +39,9 @@ def scan_once(cfg: config_mod.Config, conn, deco: Deco | None = None) -> list[tr
         deco_info = deco.device_info()
     # Deco names come first: they're what the router (and you, in the Deco app) call the device.
     info = merge_info(deco_info, pihole_info)
-    events = tracker.apply_scan(conn, sightings, int(time.time()), cfg.offline_after, info)
+    now = int(time.time())
+    events = tracker.apply_scan(conn, sightings, now, cfg.offline_after, info)
+    events += tracker.check_down(conn, now)
     log.debug("scan found %d devices, %d events", len(sightings), len(events))
     return events
 

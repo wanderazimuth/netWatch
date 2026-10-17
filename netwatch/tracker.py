@@ -14,11 +14,12 @@ from .scanner import Sighting
 
 @dataclass(frozen=True)
 class Event:
-    kind: str  # new | online | offline | ip_change
+    kind: str  # new | online | offline | ip_change | down | up
     mac: str
     ip: str | None
     name: str
     connection: str | None = None
+    seconds: int | None = None  # down/up: how long the device has been / was unseen
 
 
 def apply_scan(
@@ -71,5 +72,26 @@ def apply_scan(
         "INSERT INTO events (ts, mac, kind, ip) VALUES (?, ?, ?, ?)",
         [(now, e.mac, e.kind, e.ip) for e in events],
     )
+    conn.commit()
+    return events
+
+
+def check_down(conn: sqlite3.Connection, now: int) -> list[Event]:
+    """Alerts for devices with an offline alert: "down" once when unseen for
+    their down_after minutes, then "up" when they're seen again.
+
+    Run after apply_scan so last_seen is current. These are alerts, not state
+    changes, so they aren't written to the events table (offline/online are).
+    """
+    events: list[Event] = []
+    for row in conn.execute("SELECT * FROM devices WHERE down_after IS NOT NULL OR down_since IS NOT NULL").fetchall():
+        name = row["label"] or row["hostname"] or row["vendor"] or row["mac"]
+        if row["down_since"] is not None and row["last_seen"] > row["down_since"]:
+            conn.execute("UPDATE devices SET down_since = NULL WHERE mac = ?", (row["mac"],))
+            if row["down_after"] is not None:
+                events.append(Event("up", row["mac"], row["ip"], name, seconds=row["last_seen"] - row["down_since"]))
+        elif row["down_since"] is None and row["down_after"] is not None and now - row["last_seen"] >= row["down_after"] * 60:
+            conn.execute("UPDATE devices SET down_since = last_seen WHERE mac = ?", (row["mac"],))
+            events.append(Event("down", row["mac"], row["ip"], name, seconds=now - row["last_seen"]))
     conn.commit()
     return events

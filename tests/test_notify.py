@@ -48,6 +48,16 @@ class PlanTest(unittest.TestCase):
         self.s["watched"] = False
         self.assertEqual(self.plan([ev("online")], watched=[TV]), ([], None))
 
+    def test_down_alerts_are_high_priority(self):
+        self.assertEqual(self.plan([ev("down"), ev("new")]), (["down", "new"], "high"))
+        self.assertEqual(self.plan([ev("up")]), (["up"], "default"))
+        self.s["down_alerts"] = False
+        self.assertEqual(self.plan([ev("down"), ev("up")]), ([], None))
+
+    def test_down_alerts_respect_quiet_hours(self):
+        self.s.update(quiet_start="22:00", quiet_end="07:00")
+        self.assertEqual(self.plan([ev("down")], now=datetime(2026, 10, 16, 23, 30)), (["down"], "min"))
+
     def test_quiet_hours_silent_and_skip(self):
         self.s.update(quiet_start="22:00", quiet_end="07:00")
         night = datetime(2026, 10, 16, 23, 30)
@@ -70,6 +80,18 @@ class MessageTest(unittest.TestCase):
         self.assertEqual(title, "New device on the network")
         self.assertEqual(body, "New device joined: LGwebOSTV (192.168.0.20, 5 GHz, 00:11:22:33:44:55)")
         self.assertEqual(tags, "warning")
+
+    def test_down_and_up(self):
+        title, body, tags = notify.build_message([Event("down", TV, "192.168.0.11", "NAS", seconds=900)])
+        self.assertEqual((title, body, tags), ("Device down", "NAS has been offline for 15 min", "rotating_light"))
+        _, body, _ = notify.build_message([Event("up", TV, "192.168.0.11", "NAS", seconds=3 * 3600 + 120)])
+        self.assertEqual(body, "NAS is back online after 3 h 2 min")
+        _, _, tags = notify.build_message([ev("new"), Event("down", TV, None, "NAS", seconds=60)])
+        self.assertEqual(tags, "rotating_light")
+
+    def test_format_duration(self):
+        self.assertEqual([notify.format_duration(s) for s in (10, 300, 3600, 90000, 2 * 86400)],
+                         ["1 min", "5 min", "1 h", "1 d 1 h", "2 d"])
 
     def test_grouped_and_truncated(self):
         events = [ev("new", name=f"dev{i}") for i in range(12)]
