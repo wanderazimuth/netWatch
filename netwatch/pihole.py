@@ -5,21 +5,10 @@ from __future__ import annotations
 import json
 import logging
 import urllib.request
-from dataclasses import dataclass
+
+from .info import DeviceInfo, usable_name
 
 log = logging.getLogger(__name__)
-
-
-@dataclass(frozen=True)
-class DeviceInfo:
-    hostname: str | None
-    vendor: str | None
-
-
-def usable_name(name: str | None) -> bool:
-    # Pi-hole's network table can carry its own PTR name ("pi.hole") against
-    # unrelated clients, so it says nothing about the device.
-    return bool(name) and name.lower().rstrip(".") != "pi.hole"
 
 
 class PiholeClient:

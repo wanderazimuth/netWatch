@@ -53,6 +53,7 @@
   .tag { display: inline-block; font-size: 11px; padding: 0 6px; border-radius: 4px; margin-left: 6px;
          border: 1px solid var(--border); color: var(--muted); }
   .tag.new { border-color: var(--new); color: var(--new); }
+  .tag.conn { border-color: transparent; background: var(--row-hover); }
   .name-input { font: inherit; padding: 3px 6px; width: 100%; max-width: 240px; border: 1px solid var(--accent);
                 border-radius: 5px; background: var(--bg); color: var(--text); }
   .events { list-style: none; margin: 0; padding: 0; max-height: 70vh; overflow-y: auto; }
@@ -87,7 +88,7 @@
   <div class="layout">
     <section class="panel">
       <div class="toolbar">
-        <input type="search" id="q" placeholder="Search name, IP, MAC, vendor…">
+        <input type="search" id="q" placeholder="Search name, IP, MAC, vendor, wired / 5 GHz…">
         <div class="seg" id="filter">
           <button data-f="all" class="active">All</button>
           <button data-f="online">Online</button>
@@ -158,13 +159,14 @@ function renderDevices() {
   const q = $("q").value.trim().toLowerCase();
   const list = devices
     .filter((d) => filter === "all" || (filter === "online") === d.online)
-    .filter((d) => !q || [d.name, d.ip, d.mac, d.vendor, d.hostname].some((v) => v && v.toLowerCase().includes(q)))
+    .filter((d) => !q || [d.name, d.ip, d.mac, d.vendor, d.hostname, d.connection].some((v) => v && v.toLowerCase().includes(q)))
     .sort(compare);
 
   const body = $("rows");
   body.replaceChildren(...list.map((d) => {
     const nameCell = el("td", {},
       el("span", { className: "name", textContent: d.name, title: "Click to rename" }),
+      d.connection ? el("span", { className: "tag conn", textContent: d.connection }) : null,
       serverNow - d.first_seen < DAY ? el("span", { className: "tag new", textContent: "new" }) : null,
       d.randomized ? el("span", { className: "tag", textContent: "private MAC", title: "Randomized MAC — likely a phone or laptop with Wi-Fi privacy on" }) : null,
       d.label && (d.hostname || d.vendor) ? el("div", { className: "sub", textContent: d.hostname || d.vendor }) : null,

@@ -30,6 +30,7 @@ def devices_json(conn) -> list[dict]:
             "ip": r["ip"],
             "hostname": r["hostname"],
             "vendor": r["vendor"],
+            "connection": r["connection"],
             "label": r["label"],
             "name": db.display_name(r),
             "first_seen": r["first_seen"],

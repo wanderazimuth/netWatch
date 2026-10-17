@@ -3,8 +3,8 @@ Fing replacement to watch devices enter and leave my home network.
 
 Runs on the Raspberry Pi alongside Pi-hole: ARP-scans the LAN every minute,
 records every device in SQLite, and reports when devices join, leave, or change
-IP. Optionally pulls hostnames from Pi-hole and pushes new-device alerts via
-[ntfy](https://ntfy.sh).
+IP. Optionally pulls device names and connection type from a TP-Link Deco mesh
+and Pi-hole, and pushes new-device alerts via [ntfy](https://ntfy.sh).
 
 ## Layout
 
@@ -12,6 +12,8 @@ IP. Optionally pulls hostnames from Pi-hole and pushes new-device alerts via
 netwatch/
   scanner.py   ARP sweep (scapy)
   pihole.py    Pi-hole v6 API client for hostnames/vendors
+  deco.py      TP-Link Deco client list: names + wired/2.4/5 GHz (optional)
+  info.py      merges device details from the Deco and Pi-hole
   tracker.py   scan results -> device state + events (pure logic, unit-tested)
   db.py        SQLite schema
   notify.py    log + ntfy alerts

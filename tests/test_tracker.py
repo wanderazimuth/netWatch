@@ -1,7 +1,7 @@
 import unittest
 
 from netwatch import db
-from netwatch.pihole import DeviceInfo, usable_name
+from netwatch.info import DeviceInfo, usable_name
 from netwatch.scanner import Sighting, is_randomized_mac
 from netwatch.tracker import apply_scan
 

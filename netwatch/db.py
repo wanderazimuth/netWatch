@@ -9,6 +9,7 @@ CREATE TABLE IF NOT EXISTS devices (
     ip         TEXT,
     hostname   TEXT,
     vendor     TEXT,
+    connection TEXT,              -- from the Deco: wired / 2.4 GHz / 5 GHz ...
     label      TEXT,              -- your own name for the device, set via `netwatch label`
     first_seen INTEGER NOT NULL,  -- unix seconds
     last_seen  INTEGER NOT NULL,
@@ -34,6 +35,9 @@ def connect(path: str | Path) -> sqlite3.Connection:
     # WAL lets the dashboard read while the scanner writes.
     conn.execute("PRAGMA journal_mode=WAL")
     conn.executescript(SCHEMA)
+    # Databases created before the Deco integration lack this column.
+    if "connection" not in {r["name"] for r in conn.execute("PRAGMA table_info(devices)")}:
+        conn.execute("ALTER TABLE devices ADD COLUMN connection TEXT")
     return conn
 
 

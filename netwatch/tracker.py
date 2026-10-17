@@ -8,7 +8,7 @@ from __future__ import annotations
 import sqlite3
 from dataclasses import dataclass
 
-from .pihole import DeviceInfo
+from .info import DeviceInfo
 from .scanner import Sighting
 
 
@@ -33,14 +33,14 @@ def apply_scan(
 
     for s in sightings:
         seen.add(s.mac)
-        extra = info.get(s.mac, DeviceInfo(None, None))
+        extra = info.get(s.mac, DeviceInfo())
         row = conn.execute("SELECT * FROM devices WHERE mac = ?", (s.mac,)).fetchone()
 
         if row is None:
             conn.execute(
-                "INSERT INTO devices (mac, ip, hostname, vendor, first_seen, last_seen, online)"
-                " VALUES (?, ?, ?, ?, ?, ?, 1)",
-                (s.mac, s.ip, extra.hostname, extra.vendor, now, now),
+                "INSERT INTO devices (mac, ip, hostname, vendor, connection, first_seen, last_seen, online)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, 1)",
+                (s.mac, s.ip, extra.hostname, extra.vendor, extra.connection, now, now),
             )
             events.append(Event("new", s.mac, s.ip, extra.hostname or extra.vendor or s.mac))
             continue
@@ -51,11 +51,11 @@ def apply_scan(
         elif row["ip"] != s.ip:
             events.append(Event("ip_change", s.mac, s.ip, name))
 
-        # COALESCE keeps a previously known name if Pi-hole has none this time.
+        # COALESCE keeps previously known details if no source has them this time.
         conn.execute(
             "UPDATE devices SET ip = ?, hostname = COALESCE(?, hostname), vendor = COALESCE(?, vendor),"
-            " last_seen = ?, online = 1 WHERE mac = ?",
-            (s.ip, extra.hostname, extra.vendor, now, s.mac),
+            " connection = COALESCE(?, connection), last_seen = ?, online = 1 WHERE mac = ?",
+            (s.ip, extra.hostname, extra.vendor, extra.connection, now, s.mac),
         )
 
     # One missed scan is normal (sleeping phones, dropped packets); only declare

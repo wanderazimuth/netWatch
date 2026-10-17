@@ -19,6 +19,18 @@ db_path = "/var/lib/netwatch/netwatch.db"
 # topic name -- anyone who knows it can read your alerts.
 # ntfy_url = "https://ntfy.sh/netwatch-change-me-to-something-random"
 
+# Optional: pull device names and connection type (wired / 2.4 / 5 GHz) from a
+# TP-Link Deco mesh. Uses the Deco's unofficial local API. The password is the
+# Deco owner's password (usually your TP-Link ID password) -- keep it in its own
+# file readable only by root and the netwatch group:
+#   sudo nano /etc/netwatch/deco_password
+#   sudo chown root:netwatch /etc/netwatch/deco_password
+#   sudo chmod 640 /etc/netwatch/deco_password
+# [deco]
+# url = "http://192.168.0.1"
+# password_file = "/etc/netwatch/deco_password"
+# poll_interval = 300
+
 # Optional: pull hostnames and vendors from Pi-hole's v6 API.
 # Create an app password in Pi-hole: Settings > Web interface / API > Configure app password.
 # [pihole]

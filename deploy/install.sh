@@ -16,7 +16,7 @@ id netwatch &>/dev/null || useradd --system --no-create-home --shell /usr/sbin/n
 apt-get install -y --no-install-recommends python3-venv
 
 [[ -d $APP_DIR/.venv ]] || python3 -m venv "$APP_DIR/.venv"
-"$APP_DIR/.venv/bin/pip" install --quiet --upgrade "$APP_DIR"
+"$APP_DIR/.venv/bin/pip" install --quiet --upgrade "$APP_DIR[deco]"
 
 install -d -m 750 -o root -g netwatch "$CONF_DIR"
 if [[ ! -f $CONF_DIR/config.toml ]]; then
