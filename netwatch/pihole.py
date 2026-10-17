@@ -1,4 +1,4 @@
-"""Minimal Pi-hole v6 API client, used only to enrich devices with names."""
+"""Minimal Pi-hole v6 API client: device names, per-device lookups, and pausing devices."""
 
 from __future__ import annotations
 
@@ -64,3 +64,59 @@ class PiholeClient:
         in-memory log, which covers about the last 24 hours."""
         with self._session() as sid:
             return self._request("GET", f"/api/queries?client_ip={quote(client_ip)}&length={limit}", sid=sid)
+
+    @contextmanager
+    def admin(self):
+        """One login session for changing groups, rules and clients."""
+        with self._session() as sid:
+            yield PiholeAdmin(self, sid)
+
+
+PAUSE_GROUP = "NetWatch paused"
+BLOCK_ALL = ".*"
+
+
+class PiholeAdmin:
+    """The few gravity-database changes NetWatch makes to pause devices."""
+
+    def __init__(self, client: PiholeClient, sid: str | None):
+        self.client = client
+        self.sid = sid
+
+    def _call(self, method: str, path: str, body: dict | None = None) -> dict:
+        return self.client._request(method, path, self.sid, body)
+
+    def _group_id(self, name: str) -> int | None:
+        return next((g["id"] for g in self._call("GET", "/api/groups")["groups"] if g["name"] == name), None)
+
+    def ensure_pause_group(self) -> int:
+        """Create (or repair) the group whose members get every lookup blocked; return its id."""
+        gid = self._group_id(PAUSE_GROUP)
+        if gid is None:
+            self._call("POST", "/api/groups", {
+                "name": PAUSE_GROUP, "enabled": True,
+                "comment": "Managed by NetWatch: devices here have their internet paused",
+            })
+            gid = self._group_id(PAUSE_GROUP)
+        rule = next((d for d in self._call("GET", "/api/domains/deny/regex")["domains"] if d["domain"] == BLOCK_ALL), None)
+        body = {"comment": "Managed by NetWatch: blocks everything for paused devices", "enabled": True}
+        if rule is None:
+            self._call("POST", "/api/domains/deny/regex", {"domain": BLOCK_ALL, "groups": [gid], **body})
+        elif gid not in rule["groups"] or not rule["enabled"]:
+            self._call("PUT", f"/api/domains/deny/regex/{quote(BLOCK_ALL, safe='')}",
+                       {"groups": sorted(set(rule["groups"]) | {gid}), **body})
+        return gid
+
+    def get_client(self, client: str) -> dict | None:
+        found = self._call("GET", f"/api/clients/{quote(client, safe='')}").get("clients", [])
+        return found[0] if found else None
+
+    def save_client(self, client: str, groups: list[int], comment: str | None) -> None:
+        body = {"groups": groups, "comment": comment}
+        if self.get_client(client) is None:
+            self._call("POST", "/api/clients", {"client": client, **body})
+        else:
+            self._call("PUT", f"/api/clients/{quote(client, safe='')}", body)
+
+    def delete_client(self, client: str) -> None:
+        self._call("DELETE", f"/api/clients/{quote(client, safe='')}")

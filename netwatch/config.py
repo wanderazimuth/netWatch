@@ -14,6 +14,9 @@ else:
 class PiholeConfig:
     url: str = "http://127.0.0.1"
     password: str = ""
+    # Touched whenever NetWatch changes Pi-hole (pausing a device), so a systemd
+    # path unit can copy the change to a replica Pi-hole right away.
+    sync_trigger: str = ""
 
 
 @dataclass

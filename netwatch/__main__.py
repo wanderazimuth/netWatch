@@ -7,7 +7,7 @@ import time
 from datetime import datetime
 
 from . import config as config_mod
-from . import db, notify, scanner, tracker
+from . import db, notify, pause, scanner, tracker
 from .deco import Deco
 from .info import merge_info
 from .pihole import PiholeClient
@@ -46,6 +46,20 @@ def scan_once(cfg: config_mod.Config, conn, deco: Deco | None = None) -> list[tr
     return events
 
 
+def maintain_pauses(cfg: config_mod.Config, conn) -> None:
+    """End expired pauses and follow paused devices to new IPs."""
+    if cfg.pihole is None or not pause.needs_maintenance(conn, int(time.time())):
+        return
+    try:
+        with PiholeClient(cfg.pihole.url, cfg.pihole.password, timeout=15).admin() as admin:
+            changed = pause.maintain(conn, admin, int(time.time()))
+    except Exception:
+        log.warning("updating paused devices in Pi-hole failed; will retry", exc_info=True)
+        return
+    if changed:
+        pause.touch(cfg.pihole.sync_trigger)
+
+
 def cmd_run(cfg, conn, args) -> None:
     log.info("watching %s on %s every %ds", cfg.network, cfg.interface, cfg.scan_interval)
     deco = make_deco(cfg)
@@ -55,6 +69,7 @@ def cmd_run(cfg, conn, args) -> None:
             notify.send(scan_once(cfg, conn, deco), conn, cfg.ntfy_url, cfg.dashboard_url)
         except Exception:
             log.exception("scan failed")
+        maintain_pauses(cfg, conn)
         time.sleep(max(0.0, cfg.scan_interval - (time.monotonic() - started)))
 
 

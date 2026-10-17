@@ -48,6 +48,36 @@ uptime, its join/leave history, and its top DNS lookups from Pi-hole over the
 last 24 hours (needs the `[pihole]` config section). There is no login: anyone on
 the LAN can view it and rename devices, so don't expose port 8080 to the internet.
 
+## Pause internet
+
+The device page's **Pause internet** button blocks every DNS lookup from that
+device through Pi-hole, for 30 min / 1 h / 2 h / until 7:00 / until you resume.
+NetWatch creates a Pi-hole group, "NetWatch paused", with a block-everything
+regex rule (`.*`), and points a client entry for the device's IP at it. Resume
+puts back whatever client entry that IP had before. Timed pauses end on their
+own, and if a paused device gets a new IP the pause moves with it.
+
+It's DNS-only: apps that are already connected keep working until they look
+something up again, and a device set to use its own DNS server isn't affected.
+Pauses are by IP rather than MAC because a Pi-hole in Docker (like the NAS
+replica) can't see MACs.
+
+With a replica Pi-hole kept in sync by nebula-sync, set `sync_trigger` in the
+`[pihole]` config section and add a path unit, so the replica gets the change
+right away instead of on its next scheduled sync:
+
+```ini
+# /etc/systemd/system/nebula-sync-now.path
+[Path]
+PathModified=/var/lib/netwatch/pihole-changed
+Unit=nebula-sync.service
+
+[Install]
+WantedBy=multi-user.target
+```
+
+`sudo systemctl enable --now nebula-sync-now.path`
+
 ## Alerts
 
 Push notifications go through [ntfy](https://ntfy.sh): set `ntfy_url` (a long,

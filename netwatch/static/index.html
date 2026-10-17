@@ -57,6 +57,8 @@
          border: 1px solid var(--border); color: var(--muted); }
   .tag.new { border-color: var(--new); color: var(--new); }
   .tag.down { border-color: var(--down); color: var(--down); }
+  .tag.paused { border-color: var(--new); color: var(--new); }
+  .actions .btn { margin-right: 6px; }
   .tag.conn { border-color: transparent; background: var(--row-hover); }
   .name-input { font: inherit; padding: 3px 6px; width: 100%; max-width: 240px; border: 1px solid var(--accent);
                 border-radius: 5px; background: var(--bg); color: var(--text); }
@@ -269,6 +271,21 @@
   </div>
 </dialog>
 
+<dialog id="pause-dlg">
+  <div class="dlg-head">
+    <h2>Pause internet</h2>
+    <button class="x" id="pause-close" aria-label="Close">×</button>
+  </div>
+  <div class="dlg-body">
+    <p>Block all internet lookups for <strong id="pause-name"></strong>:</p>
+    <div class="btns" id="pause-options"></div>
+    <div class="hint" style="margin-top:10px">Works through Pi-hole, so it takes effect within a minute or two.
+      Apps that are already connected may keep working until they reconnect, and a device set to use
+      its own DNS server isn't affected.</div>
+    <div class="status" id="pause-status"></div>
+  </div>
+</dialog>
+
 <dialog id="down-dlg">
   <div class="dlg-head">
     <h2>Offline alert</h2>
@@ -385,6 +402,7 @@ function deviceTags(d) {
     conn ? el("span", { className: "tag conn", textContent: conn, title: d.deco ? "Connected through the " + d.deco + " Deco" : "" }) : null,
     serverNow - d.first_seen < DAY ? el("span", { className: "tag new", textContent: "new" }) : null,
     d.down ? el("span", { className: "tag down", textContent: "down", title: "No reply for longer than its offline alert time" }) : null,
+    d.paused ? el("span", { className: "tag paused", textContent: "paused", title: pausedText(d) }) : null,
     d.randomized ? el("span", { className: "tag", textContent: "private MAC", title: "Randomized MAC — likely a phone or laptop with Wi-Fi privacy on" }) : null,
   ].filter(Boolean);
 }
@@ -556,6 +574,7 @@ async function loadSettings() {
   try {
     settings = await fetch("/api/settings").then((r) => r.json());
     renderSettings();
+    renderDetail();  // the pause button depends on pihole_configured
   } catch (e) { /* refresh() reports connectivity problems */ }
 }
 
@@ -594,6 +613,63 @@ document.querySelectorAll("th[data-k]").forEach((th) => th.onclick = () => {
   else { sortKey = th.dataset.k; sortAsc = !["online", "last_seen", "first_seen"].includes(sortKey); }
   renderDevices();
 });
+
+// ---- pause internet (Pi-hole)
+function pausedText(d) {
+  if (!d.paused) return "";
+  if (!d.paused_until) return "Internet paused until you resume it";
+  const until = new Date(d.paused_until * 1000);
+  const sameDay = until.toDateString() === new Date().toDateString();
+  return "Internet paused until " + (sameDay ? clock(d.paused_until) : until.toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" }));
+}
+
+function pauseButton(d) {
+  const b = el("button", { className: "btn" + (d.paused ? " primary" : ""), textContent: d.paused ? "▶ Resume internet" : "⏸ Pause internet" });
+  b.onclick = async () => {
+    if (!d.paused) return openPauseDialog(d);
+    b.disabled = true;
+    try { applyPause(await post(`/api/devices/${d.mac}/resume`, {})); }
+    catch (e) { showError("Couldn't resume: " + e.message); b.disabled = false; }
+  };
+  return b;
+}
+
+function applyPause(r) {
+  if (detail && detail.device.mac === r.device.mac) detail.device = r.device;
+  renderDetail();
+  refresh();
+}
+
+function nextMorning() {
+  const t = new Date();
+  if (t.getHours() >= 7) t.setDate(t.getDate() + 1);
+  t.setHours(7, 0, 0, 0);
+  return Math.floor(t / 1000);
+}
+
+let pauseDevice = null;
+function openPauseDialog(d) {
+  pauseDevice = d;
+  $("pause-name").textContent = d.name;
+  $("pause-status").textContent = "";
+  const now = Math.floor(Date.now() / 1000);
+  const options = [["30 minutes", now + 1800], ["1 hour", now + 3600], ["2 hours", now + 7200],
+                   ["Until " + clock(nextMorning()), nextMorning()], ["Until I resume", null]];
+  $("pause-options").replaceChildren(...options.map(([label, until]) => {
+    const b = el("button", { className: "btn", textContent: label });
+    b.onclick = async () => {
+      $("pause-status").textContent = "Pausing…";
+      try {
+        applyPause(await post(`/api/devices/${pauseDevice.mac}/pause`, { until }));
+        $("pause-dlg").close();
+      } catch (e) { $("pause-status").textContent = "Not paused: " + e.message; }
+    };
+    return b;
+  }));
+  $("pause-dlg").showModal();
+}
+$("pause-close").onclick = () => $("pause-dlg").close();
+$("pause-dlg").onclick = (e) => { if (e.target === $("pause-dlg")) $("pause-dlg").close(); };
 
 // ---- device detail view (#/device/<mac>)
 const clock = (ts) => new Date(ts * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
@@ -645,11 +721,11 @@ function renderDetail() {
   name.onclick = () => startEdit($("d-name"), d);
   $("d-name").replaceChildren(name, ...deviceTags(d));
   const last = h.spans[h.spans.length - 1];
-  $("d-status").textContent = d.down ? "Down: last seen " + ago(d.last_seen)
+  $("d-status").textContent = (d.paused ? pausedText(d) + ". " : "") + (d.down ? "Down: last seen " + ago(d.last_seen)
     : !d.online ? "Offline: last seen " + ago(d.last_seen)
     : last && last[1] === h.end && last[0] > h.start ? "Online since " + fullTime(last[0])
-    : "Online";
-  $("d-actions").replaceChildren(bellButton(d), sirenButton(d));
+    : "Online");
+  $("d-actions").replaceChildren(...(settings && settings.pihole_configured ? [pauseButton(d)] : []), bellButton(d), sirenButton(d));
 
   const facts = [
     ["IP address", d.ip, "mono"],

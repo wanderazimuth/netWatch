@@ -17,6 +17,7 @@ from importlib import resources
 from urllib.parse import parse_qs, urlparse
 
 from . import db, notify
+from . import pause as pause_mod
 from . import settings as settings_mod
 from .pihole import PiholeClient
 from .scanner import is_randomized_mac
@@ -26,7 +27,8 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
-DEVICE_PATH = re.compile(r"/api/devices/([0-9a-f]{2}(?::[0-9a-f]{2}){5})/(label|notify|down_after)")
+DEVICE_PATH = re.compile(r"/api/devices/([0-9a-f]{2}(?::[0-9a-f]{2}){5})/(label|notify|down_after|pause|resume)")
+MAX_PAUSE = 7 * 86400
 DEVICE_INFO_PATH = re.compile(r"/api/devices/([0-9a-f]{2}(?::[0-9a-f]{2}){5})(/dns)?")
 MAX_HISTORY = 31 * 86400
 DNS_LIMIT = 10000  # newest queries to tally; a chatty device can make more in a day
@@ -57,6 +59,8 @@ def device_json(r) -> dict:
         "notify": bool(r["notify"]),
         "down_after": r["down_after"],
         "down": r["down_since"] is not None,
+        "paused": r["paused_ip"] is not None,
+        "paused_until": r["paused_until"],
         "randomized": is_randomized_mac(r["mac"]),
     }
 
@@ -214,7 +218,33 @@ def make_handler(db_path: str, ntfy_url: str = "", dashboard_url: str = "",
             return self._json({"ip": row["ip"], **dns_summary(result)})
 
         def _settings(self, conn) -> dict:
-            return {**settings_mod.load(conn), "ntfy_configured": bool(ntfy_url), "now": int(time.time())}
+            return {**settings_mod.load(conn), "ntfy_configured": bool(ntfy_url), "pihole_configured": pihole is not None,
+                    "now": int(time.time())}
+
+        def _pause(self, conn, mac: str, action: str, body: dict):
+            if pihole is None:
+                return self._json({"error": "Pi-hole isn't set up in config.toml"}, 409)
+            until, now = body.get("until"), int(time.time())
+            if action == "pause" and until is not None and not (
+                isinstance(until, int) and not isinstance(until, bool) and now < until <= now + MAX_PAUSE
+            ):
+                return self._json({"error": "until must be a future unix time within 7 days, or null"}, 400)
+            try:
+                with PiholeClient(pihole.url, pihole.password, timeout=15).admin() as admin:
+                    if action == "pause":
+                        pause_mod.pause(conn, admin, mac, until)
+                    else:
+                        pause_mod.resume(conn, admin, mac)
+            except LookupError:
+                return self._json({"error": "unknown device"}, 404)
+            except ValueError as e:
+                return self._json({"error": str(e)}, 409)
+            except Exception as e:
+                log.warning("Pi-hole %s failed", action, exc_info=True)
+                return self._json({"error": f"Pi-hole {action} failed: {e}"}, 502)
+            pause_mod.touch(pihole.sync_trigger)
+            row = conn.execute("SELECT * FROM devices WHERE mac = ?", (mac,)).fetchone()
+            return self._json({"ok": True, "device": device_json(row)})
 
         def do_POST(self):
             path = urlparse(self.path).path
@@ -252,6 +282,8 @@ def make_handler(db_path: str, ntfy_url: str = "", dashboard_url: str = "",
                 if not m:
                     return self._json({"error": "not found"}, 404)
                 mac, field = m.groups()
+                if field in ("pause", "resume"):
+                    return self._pause(conn, mac, field, body)
                 if field == "label":
                     value = (body.get("label") or "").strip()[:64] or None
                     cur = conn.execute("UPDATE devices SET label = ? WHERE mac = ?", (value, mac))

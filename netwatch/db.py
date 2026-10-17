@@ -15,6 +15,9 @@ CREATE TABLE IF NOT EXISTS devices (
     notify     INTEGER NOT NULL DEFAULT 0,  -- 1 = push when it comes online / goes offline
     down_after INTEGER,           -- minutes unseen before a "device down" alert; NULL = off
     down_since INTEGER,           -- last_seen when the down alert fired; NULL = not alerted
+    paused_ip  TEXT,              -- IP whose lookups Pi-hole is blocking; NULL = not paused
+    paused_until INTEGER,         -- when the pause ends; NULL = until resumed
+    paused_restore TEXT,          -- JSON: the Pi-hole client entry paused_ip had before, to put back
     first_seen INTEGER NOT NULL,  -- unix seconds
     last_seen  INTEGER NOT NULL,
     online     INTEGER NOT NULL DEFAULT 1
@@ -42,6 +45,9 @@ ADDED_COLUMNS = {
     "notify": "INTEGER NOT NULL DEFAULT 0",
     "down_after": "INTEGER",
     "down_since": "INTEGER",
+    "paused_ip": "TEXT",
+    "paused_until": "INTEGER",
+    "paused_restore": "TEXT",
 }
 
 

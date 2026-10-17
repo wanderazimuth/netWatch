@@ -111,6 +111,12 @@ class WebTest(unittest.TestCase):
             self.get(f"/api/devices/{TV}/dns")
         self.assertEqual(cm.exception.code, 409)
 
+    def test_pause_needs_pihole(self):
+        self.assertEqual(self.post(f"/api/devices/{TV}/pause", {"until": None}), 409)
+        self.assertEqual(self.post(f"/api/devices/{TV}/resume", {}), 409)
+        self.assertFalse(json.loads(self.get("/api/settings")[1])["pihole_configured"])
+        self.assertFalse(json.loads(self.get("/api/devices")[1])["devices"][0]["paused"])
+
     def test_test_notification_needs_ntfy(self):
         self.assertEqual(self.post("/api/test-notification", {}), 409)
 

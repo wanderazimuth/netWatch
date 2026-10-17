@@ -35,6 +35,10 @@ db_path = "/var/lib/netwatch/netwatch.db"
 
 # Optional: pull hostnames and vendors from Pi-hole's v6 API.
 # Create an app password in Pi-hole: Settings > Web interface / API > Configure app password.
+# Also needed for the dashboard's per-device DNS lookups and "Pause internet".
 # [pihole]
 # url = "http://127.0.0.1"
 # password = "app-password-here"
+# If you copy Pi-hole settings to a second Pi-hole (e.g. nebula-sync), NetWatch
+# can touch this file after pausing/resuming so a systemd path unit syncs at once.
+# sync_trigger = "/var/lib/netwatch/pihole-changed"
