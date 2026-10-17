@@ -102,7 +102,35 @@
   .status { font-size: 12px; margin-top: 6px; min-height: 1.2em; }
   .warn { background: color-mix(in srgb, var(--new) 15%, transparent); border: 1px solid var(--new); border-radius: 8px;
           padding: 8px 10px; font-size: 13px; margin-top: 12px; }
+  tr.clickable { cursor: pointer; }
+  .chev { color: var(--muted); font-size: 16px; text-align: right; }
+  .back { display: inline-block; margin: 16px 0 12px; color: var(--accent); text-decoration: none; }
+  .back:hover { text-decoration: underline; }
+  .detail-head { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; }
+  .detail-head .dname { font-size: 20px; font-weight: 650; }
+  .detail-head .actions { margin-left: auto; display: flex; gap: 4px; }
+  .detail-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; align-items: start; }
+  dl.facts { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 6px 16px; margin: 0; }
+  dl.facts dt { color: var(--muted); }
+  dl.facts dd { margin: 0; overflow-wrap: anywhere; }
+  .uptime { font-size: 26px; font-weight: 650; font-variant-numeric: tabular-nums; }
+  .tl { margin-top: 10px; }
+  .tl-row { display: grid; grid-template-columns: 56px minmax(0, 1fr); gap: 8px; align-items: center; margin: 5px 0;
+            font-size: 12px; color: var(--muted); }
+  .tl-track { position: relative; height: 14px; background: var(--row-hover); border-radius: 4px; overflow: hidden; }
+  .tl-track > div { position: absolute; top: 0; bottom: 0; }
+  .tl-span { background: var(--on); min-width: 2px; }
+  .tl-unknown { background: repeating-linear-gradient(45deg, transparent 0 4px, var(--border) 4px 6px); }
+  .tl-future { background: var(--panel); }
+  .tl-axis { display: flex; justify-content: space-between; margin-left: 64px; font-size: 11px; color: var(--muted); }
+  .dns-row { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; padding: 5px 0;
+             border-bottom: 1px solid var(--border); }
+  .dns-row .dom { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .dns-row .bar { position: absolute; left: 0; bottom: -1px; height: 2px; background: var(--accent); opacity: .6; }
+  .dns-row.blocked .dom { color: var(--down); }
+  .dns-row.blocked .bar { background: var(--down); }
   @media (max-width: 900px) {
+    .detail-grid { grid-template-columns: minmax(0, 1fr); }
     .layout { grid-template-columns: minmax(0, 1fr); }
     .stats { grid-template-columns: repeat(2, 1fr); }
     .hide-sm { display: none; }
@@ -120,6 +148,7 @@
   </header>
   <div class="error" id="error"></div>
 
+  <div id="list-view">
   <section class="stats">
     <div class="stat"><div class="v" id="s-online">–</div><div class="k">Online now</div></div>
     <div class="stat"><div class="v" id="s-known">–</div><div class="k">Known devices</div></div>
@@ -148,6 +177,7 @@
           <th data-k="last_seen">Last seen</th>
           <th data-k="notify" title="Alert me when this device arrives or leaves" style="width:36px">🔔</th>
           <th data-k="down_after" title="Alert me if this device stays offline" style="width:64px">🚨</th>
+          <th style="width:20px"></th>
         </tr></thead>
         <tbody id="rows"></tbody>
       </table>
@@ -159,6 +189,25 @@
       <h2>Activity</h2>
       <ul class="events" id="events"></ul>
     </section>
+  </div>
+  </div>
+
+  <div id="detail-view" hidden>
+    <a href="#" class="back">← All devices</a>
+    <div class="panel detail-head">
+      <span class="dot" id="d-dot"></span>
+      <div style="min-width:0">
+        <div class="dname" id="d-name"></div>
+        <div class="sub" id="d-status"></div>
+      </div>
+      <div class="actions" id="d-actions"></div>
+    </div>
+    <div class="detail-grid">
+      <section class="panel"><h2>Details</h2><dl class="facts" id="d-facts"></dl></section>
+      <section class="panel"><h2>Online, last 7 days</h2><div id="d-history"></div></section>
+      <section class="panel"><h2>DNS lookups</h2><div id="d-dns"></div></section>
+      <section class="panel"><h2>Activity</h2><ul class="events" id="d-events"></ul></section>
+    </div>
   </div>
 </main>
 
@@ -251,6 +300,7 @@ const ICONS = { new: "★", online: "▲", offline: "▼", ip_change: "⇄" };
 const VERBS = { new: "joined for the first time", online: "came online", offline: "went offline", ip_change: "changed IP to" };
 
 let devices = [], serverNow = 0, filter = "all", sortKey = "ip", sortAsc = true, editing = null, settings = null;
+let detailMac = null, detail = null;
 
 async function post(url, body) {
   const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
@@ -302,15 +352,12 @@ function renderDevices() {
   body.replaceChildren(...list.map((d) => {
     const nameCell = el("td", {},
       el("span", { className: "name", textContent: d.name, title: "Click to rename" }),
-      d.connection ? el("span", { className: "tag conn", textContent: d.connection }) : null,
-      serverNow - d.first_seen < DAY ? el("span", { className: "tag new", textContent: "new" }) : null,
-      d.down ? el("span", { className: "tag down", textContent: "down", title: "No reply for longer than its offline alert time" }) : null,
-      d.randomized ? el("span", { className: "tag", textContent: "private MAC", title: "Randomized MAC — likely a phone or laptop with Wi-Fi privacy on" }) : null,
+      ...deviceTags(d),
       d.label && (d.hostname || d.vendor) ? el("div", { className: "sub", textContent: d.hostname || d.vendor }) : null,
       !d.label && d.hostname && d.vendor ? el("div", { className: "sub", textContent: d.vendor }) : null,
     );
     nameCell.querySelector(".name").onclick = () => startEdit(nameCell, d);
-    return el("tr", { className: d.online ? "" : "offline" },
+    const row = el("tr", { className: "clickable" + (d.online ? "" : " offline"), title: "Click for details" },
       el("td", {}, el("span", { className: "dot" + (d.down ? " down" : d.online ? " on" : ""), title: d.down ? "Down" : d.online ? "Online" : "Offline" })),
       nameCell,
       el("td", { className: "mono", textContent: d.ip || "" }),
@@ -319,14 +366,27 @@ function renderDevices() {
       el("td", { textContent: d.online ? "now" : ago(d.last_seen), title: fullTime(d.last_seen) }),
       el("td", {}, bellButton(d)),
       el("td", {}, sirenButton(d)),
+      el("td", { className: "chev", textContent: "›" }),
     );
+    row.onclick = (e) => { if (!e.target.closest("button, .name, input")) location.hash = "#/device/" + d.mac; };
+    return row;
   }));
   $("empty").hidden = list.length > 0;
 
-  document.querySelectorAll("th").forEach((th) => {
+  document.querySelectorAll("th[data-k]").forEach((th) => {
     th.classList.toggle("sorted", th.dataset.k === sortKey);
     th.classList.toggle("asc", th.dataset.k === sortKey && sortAsc);
   });
+}
+
+function deviceTags(d) {
+  const conn = [d.connection, d.deco].filter(Boolean).join(" · ");
+  return [
+    conn ? el("span", { className: "tag conn", textContent: conn, title: d.deco ? "Connected through the " + d.deco + " Deco" : "" }) : null,
+    serverNow - d.first_seen < DAY ? el("span", { className: "tag new", textContent: "new" }) : null,
+    d.down ? el("span", { className: "tag down", textContent: "down", title: "No reply for longer than its offline alert time" }) : null,
+    d.randomized ? el("span", { className: "tag", textContent: "private MAC", title: "Randomized MAC — likely a phone or laptop with Wi-Fi privacy on" }) : null,
+  ].filter(Boolean);
 }
 
 function bellButton(d) {
@@ -340,6 +400,7 @@ function bellButton(d) {
       d.notify = !d.notify;
       renderDevices();
       renderSettings();
+      renderDetail();
     } catch (e) { showError("Couldn't change alert: " + e.message); }
   };
   return b;
@@ -376,6 +437,7 @@ $("down-save").onclick = async () => {
     $("down-dlg").close();
     renderDevices();
     renderSettings();
+    renderDetail();
   } catch (e) { $("down-status").textContent = "Not saved: " + e.message; }
 };
 $("down-close").onclick = () => $("down-dlg").close();
@@ -406,8 +468,7 @@ function startEdit(cell, d) {
   input.onblur = () => finish(true);
 }
 
-function renderEvents(events) {
-  const list = $("events");
+function renderEvents(events, list = $("events")) {
   if (!events.length) return list.replaceChildren(el("li", { className: "empty", textContent: "No activity yet." }));
   list.replaceChildren(...events.map((e) => el("li", { className: "k-" + e.kind },
     el("span", { className: "ic", textContent: ICONS[e.kind] || "•" }),
@@ -437,6 +498,7 @@ async function refresh() {
     $("s-events").textContent = e.events.filter((x) => serverNow - x.ts < DAY).length;
     renderDevices();
     renderEvents(e.events);
+    if (detailMac) loadDetail();
     $("updated").textContent = "Updated " + new Date().toLocaleTimeString();
     showError("");
   } catch (err) {
@@ -527,12 +589,162 @@ $("filter").onclick = (e) => {
   document.querySelectorAll("#filter button").forEach((b) => b.classList.toggle("active", b === e.target));
   renderDevices();
 };
-document.querySelectorAll("th").forEach((th) => th.onclick = () => {
+document.querySelectorAll("th[data-k]").forEach((th) => th.onclick = () => {
   if (sortKey === th.dataset.k) sortAsc = !sortAsc;
   else { sortKey = th.dataset.k; sortAsc = !["online", "last_seen", "first_seen"].includes(sortKey); }
   renderDevices();
 });
 
+// ---- device detail view (#/device/<mac>)
+const clock = (ts) => new Date(ts * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+
+function weekStart() {
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  d.setDate(d.getDate() - 6);
+  return Math.floor(d / 1000);
+}
+
+function route() {
+  const m = location.hash.match(/^#\/device\/([0-9a-f]{2}(?::[0-9a-f]{2}){5})$/);
+  detailMac = m ? m[1] : null;
+  detail = null;
+  $("list-view").hidden = !!detailMac;
+  $("detail-view").hidden = !detailMac;
+  if (!detailMac) {
+    document.title = "NetWatch";
+    return renderDevices();
+  }
+  window.scrollTo(0, 0);
+  for (const id of ["d-name", "d-status", "d-actions", "d-facts", "d-history", "d-events"]) $(id).replaceChildren();
+  $("d-name").textContent = "Loading…";
+  $("d-dot").className = "dot";
+  loadDetail();
+  loadDns();
+}
+
+async function loadDetail() {
+  const mac = detailMac;
+  try {
+    const r = await fetch(`/api/devices/${mac}?since=${weekStart()}`);
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || "HTTP " + r.status);
+    if (mac !== detailMac) return;  // navigated away meanwhile
+    detail = data;
+    serverNow = data.now;
+    renderDetail();
+  } catch (e) { if (mac === detailMac) showError("Couldn't load device: " + e.message); }
+}
+
+function renderDetail() {
+  if (!detail || editing) return;
+  const d = detail.device, h = detail.history;
+  document.title = d.name + " · NetWatch";
+  $("d-dot").className = "dot" + (d.down ? " down" : d.online ? " on" : "");
+  const name = el("span", { className: "name", textContent: d.name, title: "Click to rename" });
+  name.onclick = () => startEdit($("d-name"), d);
+  $("d-name").replaceChildren(name, ...deviceTags(d));
+  const last = h.spans[h.spans.length - 1];
+  $("d-status").textContent = d.down ? "Down: last seen " + ago(d.last_seen)
+    : !d.online ? "Offline: last seen " + ago(d.last_seen)
+    : last && last[1] === h.end && last[0] > h.start ? "Online since " + fullTime(last[0])
+    : "Online";
+  $("d-actions").replaceChildren(bellButton(d), sirenButton(d));
+
+  const facts = [
+    ["IP address", d.ip, "mono"],
+    ["MAC address", d.mac + (d.randomized ? " (private)" : ""), "mono"],
+    ["Hostname", d.hostname],
+    ["Vendor", d.vendor],
+    ["Connection", d.connection],
+    ["Deco", d.deco],
+    ["First seen", fullTime(d.first_seen)],
+    ["Last seen", d.online ? "now" : fullTime(d.last_seen)],
+  ];
+  $("d-facts").replaceChildren(...facts.filter((f) => f[1]).flatMap(([k, v, cls]) =>
+    [el("dt", { textContent: k }), el("dd", { textContent: v, className: cls || "" })]));
+
+  renderHistory(h);
+  renderEvents(detail.events, $("d-events"));
+}
+
+function renderHistory(h) {
+  const rows = [];
+  for (let i = 0; i < 7; i++) {
+    const day = new Date(h.start * 1000);
+    day.setDate(day.getDate() + i);
+    const next = new Date(day);
+    next.setDate(next.getDate() + 1);
+    const ds = Math.floor(day / 1000), de = Math.floor(next / 1000);
+    const seg = (cls, a, b, title) => {
+      const pct = (t) => (Math.min(Math.max(t, ds), de) - ds) / (de - ds) * 100;
+      const s = el("div", { className: cls, title });
+      s.style.left = pct(a) + "%";
+      s.style.width = (pct(b) - pct(a)) + "%";
+      return s;
+    };
+    const track = el("div", { className: "tl-track" });
+    if (h.known_from > ds) track.append(seg("tl-unknown", ds, h.known_from, "Before NetWatch first saw it"));
+    for (const [a, b] of h.spans) {
+      if (b > ds && a < de) track.append(seg("tl-span", a, b, `Online ${clock(a)} – ${b === h.end ? "now" : clock(b)}`));
+    }
+    if (h.end < de) track.append(seg("tl-future", h.end, de, ""));
+    rows.push(el("div", { className: "tl-row" },
+      el("span", { textContent: day.toLocaleDateString([], { weekday: "short", day: "numeric" }) }), track));
+  }
+  const pct = h.uptime == null ? "–" : (Math.round(h.uptime * 1000) / 10) + "%";
+  $("d-history").replaceChildren(
+    el("div", {}, el("span", { className: "uptime", textContent: pct }), " ",
+      el("span", { className: "sub", textContent: h.known_from > h.start ? "online since first seen " + ago(h.known_from) : "online" })),
+    el("div", { className: "tl" }, ...rows),
+    el("div", { className: "tl-axis" }, ...["0:00", "6:00", "12:00", "18:00", "24:00"].map((t) => el("span", { textContent: t }))),
+  );
+}
+
+async function loadDns() {
+  const mac = detailMac, box = $("d-dns");
+  box.replaceChildren(el("div", { className: "empty", textContent: "Asking Pi-hole…" }));
+  try {
+    const r = await fetch(`/api/devices/${mac}/dns`);
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || "HTTP " + r.status);
+    if (mac === detailMac) renderDns(data);
+  } catch (e) {
+    if (mac === detailMac) box.replaceChildren(el("div", { className: "empty", textContent: e.message }));
+  }
+}
+
+function renderDns(x) {
+  const reload = el("button", { className: "btn", textContent: "Refresh" });
+  reload.onclick = loadDns;
+  const note = el("div", { className: "hint", style: "margin-top:10px",
+    textContent: `Lookups from ${x.ip} logged by the Pi's Pi-hole. Lookups sent to the NAS Pi-hole or over IPv6 aren't included.` });
+  if (!x.total) {
+    return $("d-dns").replaceChildren(el("div", { className: "empty", textContent: `No lookups from ${x.ip} in Pi-hole's log.` }), note, reload);
+  }
+  const hours = Math.max(1, Math.round((Date.now() / 1000 - x.since) / 3600));
+  const summary = `${x.total.toLocaleString()} lookups of ${x.domains.toLocaleString()} domains in the last ${hours} h`
+    + (x.blocked ? `, ${x.blocked.toLocaleString()} blocked (${Math.round(x.blocked / x.total * 100)}%)` : "")
+    + (x.complete ? "" : " (most recent only)");
+  const max = x.top[0].count;
+  $("d-dns").replaceChildren(
+    el("div", { className: "sub", style: "margin-bottom:6px", textContent: summary }),
+    ...x.top.map((t) => {
+      const bar = el("span", { className: "bar" });
+      bar.style.width = (t.count / max * 100) + "%";
+      return el("div", { className: "dns-row" + (t.blocked ? " blocked" : ""),
+                         title: t.blocked ? `Blocked ${t.blocked} of ${t.count} times` : "" },
+        el("span", { className: "dom mono", textContent: t.domain }),
+        el("span", { className: "sub", textContent: t.count.toLocaleString() }),
+        bar);
+    }),
+    note,
+    el("div", { style: "margin-top:8px" }, reload),
+  );
+}
+
+window.onhashchange = route;
+route();
 refresh().then(loadSettings);
 setInterval(() => { refresh(); loadSettings(); }, 30000);
 </script>

@@ -10,55 +10,124 @@ import json
 import logging
 import re
 import time
+from collections import Counter
+from typing import TYPE_CHECKING
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib import resources
 from urllib.parse import parse_qs, urlparse
 
 from . import db, notify
 from . import settings as settings_mod
+from .pihole import PiholeClient
 from .scanner import is_randomized_mac
+
+if TYPE_CHECKING:
+    from .config import PiholeConfig  # config imports tomllib, which the dashboard doesn't otherwise need
 
 log = logging.getLogger(__name__)
 
 DEVICE_PATH = re.compile(r"/api/devices/([0-9a-f]{2}(?::[0-9a-f]{2}){5})/(label|notify|down_after)")
+DEVICE_INFO_PATH = re.compile(r"/api/devices/([0-9a-f]{2}(?::[0-9a-f]{2}){5})(/dns)?")
+MAX_HISTORY = 31 * 86400
+DNS_LIMIT = 10000  # newest queries to tally; a chatty device can make more in a day
+TOP_DOMAINS = 25
+# Pi-hole v6 query statuses that mean the lookup was blocked.
+BLOCKED = {
+    "GRAVITY", "REGEX", "DENYLIST", "GRAVITY_CNAME", "REGEX_CNAME", "DENYLIST_CNAME", "SPECIAL_DOMAIN",
+    "EXTERNAL_BLOCKED_IP", "EXTERNAL_BLOCKED_NULL", "EXTERNAL_BLOCKED_NXRA", "EXTERNAL_BLOCKED_EDE15",
+}
 # Offline-alert thresholds, in minutes. Scans run every minute, so anything
 # shorter than a couple of minutes would fire on a single missed reply.
 DOWN_AFTER_MIN, DOWN_AFTER_MAX = 2, 7 * 24 * 60
 
 
+def device_json(r) -> dict:
+    return {
+        "mac": r["mac"],
+        "ip": r["ip"],
+        "hostname": r["hostname"],
+        "vendor": r["vendor"],
+        "connection": r["connection"],
+        "deco": r["deco"],
+        "label": r["label"],
+        "name": db.display_name(r),
+        "first_seen": r["first_seen"],
+        "last_seen": r["last_seen"],
+        "online": bool(r["online"]),
+        "notify": bool(r["notify"]),
+        "down_after": r["down_after"],
+        "down": r["down_since"] is not None,
+        "randomized": is_randomized_mac(r["mac"]),
+    }
+
+
 def devices_json(conn) -> list[dict]:
-    rows = conn.execute("SELECT * FROM devices").fetchall()
-    return [
-        {
-            "mac": r["mac"],
-            "ip": r["ip"],
-            "hostname": r["hostname"],
-            "vendor": r["vendor"],
-            "connection": r["connection"],
-            "label": r["label"],
-            "name": db.display_name(r),
-            "first_seen": r["first_seen"],
-            "last_seen": r["last_seen"],
-            "online": bool(r["online"]),
-            "notify": bool(r["notify"]),
-            "down_after": r["down_after"],
-            "down": r["down_since"] is not None,
-            "randomized": is_randomized_mac(r["mac"]),
-        }
-        for r in rows
-    ]
+    return [device_json(r) for r in conn.execute("SELECT * FROM devices")]
 
 
-def events_json(conn, limit: int) -> list[dict]:
+def events_json(conn, limit: int, mac: str | None = None) -> list[dict]:
     rows = conn.execute(
         "SELECT e.ts, e.kind, e.ip AS event_ip, d.* FROM events e JOIN devices d USING (mac)"
-        " ORDER BY e.ts DESC, e.id DESC LIMIT ?",
-        (limit,),
+        + (" WHERE e.mac = ?" if mac else "")
+        + " ORDER BY e.ts DESC, e.id DESC LIMIT ?",
+        (mac, limit) if mac else (limit,),
     ).fetchall()
     return [{"ts": r["ts"], "kind": r["kind"], "ip": r["event_ip"], "mac": r["mac"], "name": db.display_name(r)} for r in rows]
 
 
-def make_handler(db_path: str, ntfy_url: str = "", dashboard_url: str = ""):
+def online_spans(conn, mac: str, start: int, end: int, offline_after: int) -> dict:
+    """When a device was online between start and end, as [from, to] pairs.
+
+    Rebuilt from its join/leave events. An offline event is only recorded
+    offline_after seconds after the device was last seen, so each span ends
+    that much before its offline event.
+    """
+    row = conn.execute("SELECT first_seen FROM devices WHERE mac = ?", (mac,)).fetchone()
+    known_from = min(max(start, row["first_seen"]), end)
+    before = conn.execute(
+        "SELECT kind FROM events WHERE mac = ? AND ts < ? ORDER BY ts DESC, id DESC LIMIT 1", (mac, start)
+    ).fetchone()
+    online_since = known_from if before and before["kind"] != "offline" else None
+    spans = []
+    for e in conn.execute(
+        "SELECT ts, kind FROM events WHERE mac = ? AND ts >= ? AND ts <= ? ORDER BY ts, id", (mac, start, end)
+    ):
+        if e["kind"] == "offline":
+            if online_since is not None:
+                spans.append([online_since, max(online_since, e["ts"] - offline_after)])
+            online_since = None
+        elif online_since is None:  # new / online; ip_change while online changes nothing
+            online_since = e["ts"]
+    if online_since is not None:
+        spans.append([online_since, end])
+    return {
+        "start": start,
+        "end": end,
+        "known_from": known_from,
+        "spans": spans,
+        "uptime": sum(b - a for a, b in spans) / (end - known_from) if end > known_from else None,
+    }
+
+
+def dns_summary(result: dict) -> dict:
+    """Tally a Pi-hole /api/queries response (newest first) into top domains."""
+    queries = result.get("queries", [])
+    counts = Counter(q["domain"] for q in queries)
+    blocked = Counter(q["domain"] for q in queries if q.get("status") in BLOCKED)
+    complete = result.get("recordsFiltered", len(queries)) <= len(queries)
+    return {
+        "total": len(queries),
+        "blocked": sum(blocked.values()),
+        "domains": len(counts),
+        # Pi-hole keeps about 24 h in memory; past the limit, the tally starts at the oldest query we got.
+        "since": result.get("earliest_timestamp") if complete or not queries else int(queries[-1]["time"]),
+        "complete": complete,
+        "top": [{"domain": d, "count": n, "blocked": blocked[d]} for d, n in counts.most_common(TOP_DOMAINS)],
+    }
+
+
+def make_handler(db_path: str, ntfy_url: str = "", dashboard_url: str = "",
+                 pihole: PiholeConfig | None = None, offline_after: int = 600):
     static = resources.files("netwatch").joinpath("static")
     index_html = static.joinpath("index.html").read_bytes()
     favicon = static.joinpath("favicon.svg").read_bytes()
@@ -99,7 +168,50 @@ def make_handler(db_path: str, ntfy_url: str = "", dashboard_url: str = ""):
                     return self._json({"events": events_json(conn, min(max(limit, 1), 1000))})
                 finally:
                     conn.close()
+            m = DEVICE_INFO_PATH.fullmatch(url.path)
+            if m:
+                return self._device(m.group(1), parse_qs(url.query)) if not m.group(2) else self._dns(m.group(1))
             self._json({"error": "not found"}, 404)
+
+        def _device(self, mac: str, query: dict):
+            conn = db.connect(db_path)
+            try:
+                row = conn.execute("SELECT * FROM devices WHERE mac = ?", (mac,)).fetchone()
+                if row is None:
+                    return self._json({"error": "unknown device"}, 404)
+                now = int(time.time())
+                try:
+                    since = int(query.get("since", [now - 7 * 86400])[0])
+                except ValueError:
+                    return self._json({"error": "since must be a unix timestamp"}, 400)
+                since = min(max(since, now - MAX_HISTORY), now)
+                return self._json({
+                    "now": now,
+                    "device": device_json(row),
+                    "history": online_spans(conn, mac, since, now, offline_after),
+                    "events": events_json(conn, 100, mac),
+                })
+            finally:
+                conn.close()
+
+        def _dns(self, mac: str):
+            conn = db.connect(db_path)
+            try:
+                row = conn.execute("SELECT ip FROM devices WHERE mac = ?", (mac,)).fetchone()
+            finally:
+                conn.close()
+            if row is None:
+                return self._json({"error": "unknown device"}, 404)
+            if pihole is None:
+                return self._json({"error": "Pi-hole isn't set up in config.toml"}, 409)
+            if not row["ip"]:
+                return self._json({"error": "no known IP address"}, 409)
+            try:
+                result = PiholeClient(pihole.url, pihole.password, timeout=15).queries(row["ip"], DNS_LIMIT)
+            except Exception as e:
+                log.warning("Pi-hole query lookup failed", exc_info=True)
+                return self._json({"error": f"Pi-hole lookup failed: {e}"}, 502)
+            return self._json({"ip": row["ip"], **dns_summary(result)})
 
         def _settings(self, conn) -> dict:
             return {**settings_mod.load(conn), "ntfy_configured": bool(ntfy_url), "now": int(time.time())}
@@ -170,7 +282,8 @@ def make_handler(db_path: str, ntfy_url: str = "", dashboard_url: str = ""):
     return Handler
 
 
-def serve(db_path: str, host: str, port: int, ntfy_url: str = "", dashboard_url: str = "") -> None:
-    server = ThreadingHTTPServer((host, port), make_handler(db_path, ntfy_url, dashboard_url))
+def serve(db_path: str, host: str, port: int, ntfy_url: str = "", dashboard_url: str = "",
+          pihole: PiholeConfig | None = None, offline_after: int = 600) -> None:
+    server = ThreadingHTTPServer((host, port), make_handler(db_path, ntfy_url, dashboard_url, pihole, offline_after))
     log.info("dashboard on http://%s:%d", host, port)
     server.serve_forever()

@@ -1,3 +1,4 @@
+import json
 import os
 import sqlite3
 import tempfile
@@ -53,6 +54,37 @@ class DecoTest(unittest.TestCase):
 
     def test_normalize_mac(self):
         self.assertEqual(normalize_mac("60-A4-B7-AE-7C-A4"), "60:a4:b7:ae:7c:a4")
+
+    def test_clients_by_node(self):
+        class Node:
+            def __init__(self, name, mac):
+                self.name, self.macaddr = name, mac
+
+        class Client:
+            def __init__(self):
+                self.asked = []
+
+            def request(self, path, body):
+                mac = json.loads(body)["params"]["device_mac"]
+                self.asked.append(mac)
+                if mac == "60-A4-B7-AE-7C-9F":
+                    raise RuntimeError("timeout")
+                return {"client_list": [{"mac": "AA-BB-CC-00-00-01", "online": True},
+                                        {"mac": "AA-BB-CC-00-00-02", "online": False}]}
+
+        client = Client()
+        via = Deco._clients_by_node(client, [Node("Upstairs", "60:a4:b7:ae:7c:a4"), Node("Basement", "60-A4-B7-AE-7C-9F")])
+        self.assertEqual(client.asked, ["60-A4-B7-AE-7C-A4", "60-A4-B7-AE-7C-9F"])
+        self.assertEqual(via, {"aa:bb:cc:00:00:01": "Upstairs"})
+
+    def test_deco_name_recorded(self):
+        conn = db.connect(":memory:")
+        from netwatch.scanner import Sighting
+        from netwatch.tracker import apply_scan
+        apply_scan(conn, [Sighting("aa:aa:aa:aa:aa:aa", "192.168.0.50")], 0, 600,
+                   {"aa:aa:aa:aa:aa:aa": DeviceInfo(connection="5 GHz", deco="Basement")})
+        apply_scan(conn, [Sighting("aa:aa:aa:aa:aa:aa", "192.168.0.50")], 60, 600)
+        self.assertEqual(conn.execute("SELECT deco FROM devices").fetchone()[0], "Basement")
 
     def test_polls_only_when_due(self):
         self.deco.result = [DecoClient("aa:aa:aa:aa:aa:aa", "192.168.0.50", "iPhone", "5 GHz")]

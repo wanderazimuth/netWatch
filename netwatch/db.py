@@ -10,6 +10,7 @@ CREATE TABLE IF NOT EXISTS devices (
     hostname   TEXT,
     vendor     TEXT,
     connection TEXT,              -- from the Deco: wired / 2.4 GHz / 5 GHz ...
+    deco       TEXT,              -- which Deco unit it's connected through
     label      TEXT,              -- your own name for the device, set via `netwatch label`
     notify     INTEGER NOT NULL DEFAULT 0,  -- 1 = push when it comes online / goes offline
     down_after INTEGER,           -- minutes unseen before a "device down" alert; NULL = off
@@ -37,6 +38,7 @@ CREATE TABLE IF NOT EXISTS settings (
 # Columns added after the first release, for upgrading existing databases.
 ADDED_COLUMNS = {
     "connection": "TEXT",
+    "deco": "TEXT",
     "notify": "INTEGER NOT NULL DEFAULT 0",
     "down_after": "INTEGER",
     "down_since": "INTEGER",
@@ -54,7 +56,12 @@ def connect(path: str | Path) -> sqlite3.Connection:
     existing = {r["name"] for r in conn.execute("PRAGMA table_info(devices)")}
     for column, decl in ADDED_COLUMNS.items():
         if column not in existing:
-            conn.execute(f"ALTER TABLE devices ADD COLUMN {column} {decl}")
+            try:
+                conn.execute(f"ALTER TABLE devices ADD COLUMN {column} {decl}")
+            except sqlite3.OperationalError as e:
+                # Another connection (scanner or a parallel dashboard request) added it first.
+                if "duplicate column" not in str(e):
+                    raise
     return conn
 
 

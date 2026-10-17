@@ -42,7 +42,10 @@ Update later with `cd /opt/netwatch && sudo git pull && sudo bash deploy/install
 ## Dashboard
 
 http://192.168.0.10:8080 -- live device list (search, filter, sort), activity
-feed, and click-to-rename. Refreshes every 30 s. There is no login: anyone on
+feed, and click-to-rename. Refreshes every 30 s. Click a device's row for its
+detail page: which Deco it's connected through, a 7-day online timeline with
+uptime, its join/leave history, and its top DNS lookups from Pi-hole over the
+last 24 hours (needs the `[pihole]` config section). There is no login: anyone on
 the LAN can view it and rename devices, so don't expose port 8080 to the internet.
 
 ## Alerts

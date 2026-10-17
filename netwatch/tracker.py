@@ -40,9 +40,9 @@ def apply_scan(
 
         if row is None:
             conn.execute(
-                "INSERT INTO devices (mac, ip, hostname, vendor, connection, first_seen, last_seen, online)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, 1)",
-                (s.mac, s.ip, extra.hostname, extra.vendor, extra.connection, now, now),
+                "INSERT INTO devices (mac, ip, hostname, vendor, connection, deco, first_seen, last_seen, online)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)",
+                (s.mac, s.ip, extra.hostname, extra.vendor, extra.connection, extra.deco, now, now),
             )
             events.append(Event("new", s.mac, s.ip, extra.hostname or extra.vendor or s.mac, extra.connection))
             continue
@@ -56,8 +56,8 @@ def apply_scan(
         # COALESCE keeps previously known details if no source has them this time.
         conn.execute(
             "UPDATE devices SET ip = ?, hostname = COALESCE(?, hostname), vendor = COALESCE(?, vendor),"
-            " connection = COALESCE(?, connection), last_seen = ?, online = 1 WHERE mac = ?",
-            (s.ip, extra.hostname, extra.vendor, extra.connection, now, s.mac),
+            " connection = COALESCE(?, connection), deco = COALESCE(?, deco), last_seen = ?, online = 1 WHERE mac = ?",
+            (s.ip, extra.hostname, extra.vendor, extra.connection, extra.deco, now, s.mac),
         )
 
     # One missed scan is normal (sleeping phones, dropped packets); only declare

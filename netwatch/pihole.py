@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 import logging
 import urllib.request
+from contextlib import contextmanager
+from urllib.parse import quote
 
 from .info import DeviceInfo, usable_name
 
@@ -27,14 +29,14 @@ class PiholeClient:
             payload = resp.read()
         return json.loads(payload) if payload else {}
 
-    def device_info(self) -> dict[str, DeviceInfo]:
-        """Map lowercase MAC -> hostname/vendor from Pi-hole's network table."""
+    @contextmanager
+    def _session(self):
         sid = None
         if self.password:
             auth = self._request("POST", "/api/auth", body={"password": self.password})
             sid = auth["session"]["sid"]
         try:
-            devices = self._request("GET", "/api/network/devices", sid=sid).get("devices", [])
+            yield sid
         finally:
             # Pi-hole caps concurrent sessions, so release ours every time.
             if sid:
@@ -42,6 +44,11 @@ class PiholeClient:
                     self._request("DELETE", "/api/auth", sid=sid)
                 except Exception:
                     log.debug("Pi-hole logout failed", exc_info=True)
+
+    def device_info(self) -> dict[str, DeviceInfo]:
+        """Map lowercase MAC -> hostname/vendor from Pi-hole's network table."""
+        with self._session() as sid:
+            devices = self._request("GET", "/api/network/devices", sid=sid).get("devices", [])
 
         info = {}
         for dev in devices:
@@ -51,3 +58,9 @@ class PiholeClient:
             name = next((ip["name"] for ip in dev.get("ips", []) if usable_name(ip.get("name"))), None)
             info[mac] = DeviceInfo(hostname=name, vendor=dev.get("macVendor") or None)
         return info
+
+    def queries(self, client_ip: str, limit: int) -> dict:
+        """The most recent DNS queries from one client (newest first), from Pi-hole's
+        in-memory log, which covers about the last 24 hours."""
+        with self._session() as sid:
+            return self._request("GET", f"/api/queries?client_ip={quote(client_ip)}&length={limit}", sid=sid)

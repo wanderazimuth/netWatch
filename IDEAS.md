@@ -6,8 +6,7 @@ people build with similar tools (NetAlertX / Pi.Alert, WatchYourLAN, Fing).
 ## Next up (best value for the effort)
 
 1. ~~**Offline alerts for chosen devices.**~~ Done: the 🚨 column on the dashboard.
-2. **Per-device detail page.** First/last seen, online history, which Deco
-   (Upstairs/Basement) it's on, and its top DNS lookups from Pi-hole.
+2. ~~**Per-device detail page.**~~ Done: click a device row on the dashboard.
 3. **"Pause internet" button.** Move a device into a blocking Pi-hole group.
    DNS-only, so a determined user could bypass it, but it works for most devices.
 4. **Weekly port scan.** nmap each device; alert when one starts exposing a new

@@ -93,6 +93,24 @@ class WebTest(unittest.TestCase):
         self.assertEqual(self.post(f"/api/devices/{TV}/down_after", {"minutes": None}), 200)
         self.assertIsNone(device()["down_after"])
 
+    def test_device_detail(self):
+        status, body = self.get(f"/api/devices/{TV}?since=0")
+        data = json.loads(body)
+        self.assertEqual(data["device"]["mac"], TV)
+        self.assertEqual([e["kind"] for e in data["events"]], ["new"])
+        h = data["history"]
+        # since=0 is clamped to the last 31 days, which starts after this test device was first seen.
+        self.assertEqual(h["end"] - h["start"], web.MAX_HISTORY)
+        self.assertEqual(h["spans"], [[h["start"], h["end"]]])
+        with self.assertRaises(urllib.error.HTTPError) as cm:
+            self.get("/api/devices/aa:aa:aa:aa:aa:aa")
+        self.assertEqual(cm.exception.code, 404)
+
+    def test_dns_needs_pihole(self):
+        with self.assertRaises(urllib.error.HTTPError) as cm:
+            self.get(f"/api/devices/{TV}/dns")
+        self.assertEqual(cm.exception.code, 409)
+
     def test_test_notification_needs_ntfy(self):
         self.assertEqual(self.post("/api/test-notification", {}), 409)
 
@@ -105,6 +123,46 @@ class WebTest(unittest.TestCase):
         with self.assertRaises(urllib.error.HTTPError) as cm:
             self.get("/nope")
         self.assertEqual(cm.exception.code, 404)
+
+
+class HistoryTest(unittest.TestCase):
+    def setUp(self):
+        self.conn = db.connect(":memory:")
+
+    def spans(self, start, end):
+        return web.online_spans(self.conn, TV, start, end, offline_after=600)
+
+    def test_spans_from_events(self):
+        apply_scan(self.conn, [Sighting(TV, "192.168.0.20")], 1000, 600)  # new
+        apply_scan(self.conn, [], 2000, 600)  # offline event at 2000; last seen 1000
+        apply_scan(self.conn, [Sighting(TV, "192.168.0.20")], 5000, 600)  # back online
+        h = self.spans(0, 6000)
+        self.assertEqual(h["known_from"], 1000)
+        # Offline detected at 2000 but last seen 600 s before it.
+        self.assertEqual(h["spans"], [[1000, 1400], [5000, 6000]])
+        self.assertAlmostEqual(h["uptime"], 1400 / 5000)
+
+    def test_window_starts_mid_session(self):
+        apply_scan(self.conn, [Sighting(TV, "192.168.0.20")], 1000, 600)
+        self.assertEqual(self.spans(3000, 4000)["spans"], [[3000, 4000]])
+        apply_scan(self.conn, [], 1700, 600)  # offline
+        self.assertEqual(self.spans(3000, 4000)["spans"], [])
+
+
+class DnsSummaryTest(unittest.TestCase):
+    def test_tally(self):
+        q = lambda d, status="FORWARDED", t=100: {"domain": d, "status": status, "time": t}
+        result = {"queries": [q("a.com"), q("ads.net", "GRAVITY"), q("a.com"), q("ads.net", "GRAVITY", 50)],
+                  "recordsFiltered": 4, "earliest_timestamp": 10}
+        s = web.dns_summary(result)
+        self.assertEqual((s["total"], s["blocked"], s["domains"], s["since"], s["complete"]), (4, 2, 2, 10, True))
+        self.assertEqual([(t["domain"], t["count"], t["blocked"]) for t in s["top"]], [("a.com", 2, 0), ("ads.net", 2, 2)])
+
+    def test_truncated_tally_starts_at_oldest_query(self):
+        result = {"queries": [{"domain": "a.com", "time": 900.5}, {"domain": "a.com", "time": 800.2}],
+                  "recordsFiltered": 50, "earliest_timestamp": 10}
+        s = web.dns_summary(result)
+        self.assertEqual((s["since"], s["complete"]), (800, False))
 
 
 if __name__ == "__main__":

@@ -31,6 +31,7 @@ class DecoClient:
     ip: str | None
     name: str | None
     connection: str | None
+    deco: str | None = None  # name of the Deco unit it's connected through
 
 
 def normalize_mac(mac) -> str:
@@ -80,6 +81,7 @@ class Deco:
         try:
             status = client.get_status()
             nodes = client.get_mesh_nodes()
+            via = self._clients_by_node(client, nodes)
         finally:
             try:
                 client.logout()
@@ -92,6 +94,7 @@ class Deco:
                 ip=str(d.ipaddr) if d.ipaddr else None,
                 name=d.hostname if usable_name(d.hostname) else None,
                 connection=connection_label(d.type.name),
+                deco=via.get(normalize_mac(d.macaddr)),
             )
             for d in status.devices
             if d.active
@@ -102,6 +105,29 @@ class Deco:
             for n in nodes
         ]
         return found
+
+    @staticmethod
+    def _clients_by_node(client, nodes) -> dict[str, str]:
+        """Map client MAC -> name of the Deco it's connected through.
+
+        The combined client list doesn't say which unit a client is on, but
+        asking each unit for its own list does. Optional: on failure, skip it.
+        """
+        from json import dumps
+
+        via = {}
+        for node in nodes:
+            try:
+                node_mac = normalize_mac(node.macaddr).replace(":", "-").upper()
+                items = client.request(
+                    "admin/client?form=client_list",
+                    dumps({"operation": "read", "params": {"device_mac": node_mac}}),
+                ).get("client_list", [])
+            except Exception:
+                log.debug("Deco client list for %s failed", node.name, exc_info=True)
+                continue
+            via.update({normalize_mac(i["mac"]): node.name for i in items if i.get("online") and i.get("mac")})
+        return via
 
     def refresh(self) -> bool:
         """Poll the Deco if due. Returns True when fresh data was fetched."""
@@ -127,7 +153,7 @@ class Deco:
         return True
 
     def device_info(self) -> dict[str, DeviceInfo]:
-        return {mac: DeviceInfo(hostname=c.name, connection=c.connection) for mac, c in self.clients.items()}
+        return {mac: DeviceInfo(hostname=c.name, connection=c.connection, deco=c.deco) for mac, c in self.clients.items()}
 
     def sightings(self, network: str) -> list[Sighting]:
         """Clients the Deco reports as connected, limited to the scanned subnet.

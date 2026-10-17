@@ -96,7 +96,7 @@ def cmd_web(cfg, conn, args) -> None:
     from . import web
 
     conn.close()  # the server opens a connection per request
-    web.serve(cfg.db_path, args.host, args.port, cfg.ntfy_url, cfg.dashboard_url)
+    web.serve(cfg.db_path, args.host, args.port, cfg.ntfy_url, cfg.dashboard_url, cfg.pihole, cfg.offline_after)
 
 
 def main() -> None:

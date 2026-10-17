@@ -15,6 +15,7 @@ class DeviceInfo:
     hostname: str | None = None
     vendor: str | None = None
     connection: str | None = None  # e.g. "wired", "5 GHz", "2.4 GHz guest"
+    deco: str | None = None  # which Deco unit it's connected through, e.g. "Basement"
 
 
 def usable_name(name: str | None) -> bool:
