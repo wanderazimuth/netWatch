@@ -104,9 +104,20 @@ class WebTest(unittest.TestCase):
         # since=0 is clamped to the last 31 days, which starts after this test device was first seen.
         self.assertEqual(h["end"] - h["start"], web.MAX_HISTORY)
         self.assertEqual(h["spans"], [[h["start"], h["end"]]])
+        self.assertEqual((data["ports_scanned"], data["ports"]), (None, []))
         with self.assertRaises(urllib.error.HTTPError) as cm:
             self.get("/api/devices/aa:aa:aa:aa:aa:aa")
         self.assertEqual(cm.exception.code, 404)
+
+    def test_device_ports(self):
+        conn = db.connect(self.db_path)
+        conn.execute("INSERT INTO ports VALUES (?, 22, 'tcp', 'ssh', 2000, 3000), (?, 23, 'tcp', 'telnet', 2000, 2000)", (TV, TV))
+        conn.execute("UPDATE devices SET ports_scanned = 3000")
+        conn.commit()
+        conn.close()
+        data = json.loads(self.get(f"/api/devices/{TV}")[1])
+        self.assertEqual(data["ports_scanned"], 3000)
+        self.assertEqual([(p["port"], p["service"], p["open"]) for p in data["ports"]], [(22, "ssh", True), (23, "telnet", False)])
 
     def test_dns_needs_pihole(self):
         with self.assertRaises(urllib.error.HTTPError) as cm:

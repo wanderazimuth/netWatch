@@ -1,0 +1,12 @@
+[Unit]
+Description=Weekly NetWatch port scan
+
+[Timer]
+# Daytime, so alerts don't land in quiet hours. Persistent: if the Pi was off
+# at that time, scan once it's back.
+OnCalendar=Sun 10:00
+RandomizedDelaySec=15min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

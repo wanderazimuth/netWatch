@@ -8,8 +8,7 @@ people build with similar tools (NetAlertX / Pi.Alert, WatchYourLAN, Fing).
 1. ~~**Offline alerts for chosen devices.**~~ Done: the 🚨 column on the dashboard.
 2. ~~**Per-device detail page.**~~ Done: click a device row on the dashboard.
 3. ~~**"Pause internet" button.**~~ Done: on each device's page.
-4. **Weekly port scan.** nmap each device; alert when one starts exposing a new
-   service.
+4. ~~**Weekly port scan.**~~ Done: open ports on each device's page, alerts for new ones.
 
 ## More ideas
 

@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS devices (
     paused_ip  TEXT,              -- IP whose lookups Pi-hole is blocking; NULL = not paused
     paused_until INTEGER,         -- when the pause ends; NULL = until resumed
     paused_restore TEXT,          -- JSON: the Pi-hole client entry paused_ip had before, to put back
+    ports_scanned INTEGER,        -- last port scan of this device; NULL = never scanned
     first_seen INTEGER NOT NULL,  -- unix seconds
     last_seen  INTEGER NOT NULL,
     online     INTEGER NOT NULL DEFAULT 1
@@ -31,6 +32,18 @@ CREATE TABLE IF NOT EXISTS events (
     ip   TEXT
 );
 CREATE INDEX IF NOT EXISTS events_ts ON events(ts);
+
+-- Every port a device has had open. A port is open now if last_seen equals
+-- the device's ports_scanned.
+CREATE TABLE IF NOT EXISTS ports (
+    mac        TEXT NOT NULL REFERENCES devices(mac),
+    port       INTEGER NOT NULL,
+    proto      TEXT NOT NULL,     -- tcp
+    service    TEXT,              -- nmap's usual name for the port
+    first_seen INTEGER NOT NULL,
+    last_seen  INTEGER NOT NULL,
+    PRIMARY KEY (mac, port, proto)
+);
 
 CREATE TABLE IF NOT EXISTS settings (
     key   TEXT PRIMARY KEY,
@@ -48,6 +61,7 @@ ADDED_COLUMNS = {
     "paused_ip": "TEXT",
     "paused_until": "INTEGER",
     "paused_restore": "TEXT",
+    "ports_scanned": "INTEGER",
 }
 
 

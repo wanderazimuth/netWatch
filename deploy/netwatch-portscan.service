@@ -1,0 +1,27 @@
+[Unit]
+Description=NetWatch port scan of online devices
+After=network-online.target netwatch.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=netwatch
+Group=netwatch
+WorkingDirectory=/opt/netwatch
+ExecStart=/opt/netwatch/.venv/bin/python -m netwatch --config /etc/netwatch/config.toml portscan
+TimeoutStartSec=3h
+
+# A TCP connect scan needs no capabilities at all.
+CapabilityBoundingSet=
+NoNewPrivileges=true
+
+StateDirectory=netwatch
+Environment=HOME=/var/lib/netwatch
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+
+# Leave the Pi's CPU to Pi-hole.
+Nice=10
+MemoryMax=200M
+CPUQuota=50%

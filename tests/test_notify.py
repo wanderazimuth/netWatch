@@ -54,6 +54,11 @@ class PlanTest(unittest.TestCase):
         self.s["down_alerts"] = False
         self.assertEqual(self.plan([ev("down"), ev("up")]), ([], None))
 
+    def test_port_alerts(self):
+        self.assertEqual(self.plan([ev("port")]), (["port"], "default"))
+        self.s["port_alerts"] = False
+        self.assertEqual(self.plan([ev("port")]), ([], None))
+
     def test_down_alerts_respect_quiet_hours(self):
         self.s.update(quiet_start="22:00", quiet_end="07:00")
         self.assertEqual(self.plan([ev("down")], now=datetime(2026, 10, 16, 23, 30)), (["down"], "min"))
@@ -88,6 +93,11 @@ class MessageTest(unittest.TestCase):
         self.assertEqual(body, "NAS is back online after 3 h 2 min")
         _, _, tags = notify.build_message([ev("new"), Event("down", TV, None, "NAS", seconds=60)])
         self.assertEqual(tags, "rotating_light")
+
+    def test_port_alerts(self):
+        e = Event("port", TV, "192.168.0.20", "Printer", port="23/tcp (telnet)")
+        self.assertEqual(notify.build_message([e]),
+                         ("New open port", "Printer (192.168.0.20) has a new open port: 23/tcp (telnet)", "unlock"))
 
     def test_format_duration(self):
         self.assertEqual([notify.format_duration(s) for s in (10, 300, 3600, 90000, 2 * 86400)],

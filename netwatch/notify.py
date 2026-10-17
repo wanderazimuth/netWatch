@@ -20,10 +20,12 @@ MESSAGES = {
     "ip_change": "{name} changed IP to {ip}",
     "down": "{name} has been offline for {duration}",
     "up": "{name} is back online after {duration}",
+    "port": "{name} ({ip}) has a new open port: {port}",
 }
 TITLES = {"new": "New device on the network", "online": "Device arrived", "offline": "Device left",
-          "down": "Device down", "up": "Device back up"}
-TAGS = {"new": "warning", "online": "house", "offline": "wave", "down": "rotating_light", "up": "white_check_mark"}
+          "down": "Device down", "up": "Device back up", "port": "New open port"}
+TAGS = {"new": "warning", "online": "house", "offline": "wave", "down": "rotating_light", "up": "white_check_mark",
+        "port": "unlock"}
 MAX_LINES = 10
 
 
@@ -41,7 +43,7 @@ def format_duration(seconds: int) -> str:
 def format_event(e: Event) -> str:
     details = ", ".join(x for x in (e.ip, e.connection, e.mac) if x)
     duration = format_duration(e.seconds) if e.seconds is not None else ""
-    text = MESSAGES[e.kind].format(name=e.name, ip=e.ip, details=details, duration=duration)
+    text = MESSAGES[e.kind].format(name=e.name, ip=e.ip, details=details, duration=duration, port=e.port)
     if e.kind == "new" and is_randomized_mac(e.mac):
         text += " [private MAC -- may be a known phone]"
     return text
@@ -71,6 +73,9 @@ def plan(events: list[Event], settings: dict, watched: set[str], now: datetime) 
             # Only devices with an offline alert set produce these.
             if settings["down_alerts"]:
                 chosen.append(e)
+        elif e.kind == "port":
+            if settings["port_alerts"]:
+                chosen.append(e)
     if not chosen:
         return [], None
     if in_quiet_hours(now, settings["quiet_start"], settings["quiet_end"]):
@@ -87,7 +92,7 @@ def build_message(events: list[Event]) -> tuple[str, str, str]:
     if len(events) > MAX_LINES:
         lines.append(f"...and {len(events) - MAX_LINES} more")
     kinds = {e.kind for e in events}
-    tags = next((TAGS[k] for k in ("down", "new") if k in kinds), TAGS[events[0].kind])
+    tags = next((TAGS[k] for k in ("down", "new", "port") if k in kinds), TAGS[events[0].kind])
     return f"{len(events)} network changes", "\n".join(lines), tags
 
 

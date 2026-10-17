@@ -80,6 +80,12 @@ def events_json(conn, limit: int, mac: str | None = None) -> list[dict]:
     return [{"ts": r["ts"], "kind": r["kind"], "ip": r["event_ip"], "mac": r["mac"], "name": db.display_name(r)} for r in rows]
 
 
+def ports_json(conn, mac: str, scanned: int | None) -> list[dict]:
+    rows = conn.execute("SELECT * FROM ports WHERE mac = ? ORDER BY port, proto", (mac,))
+    return [{"port": r["port"], "proto": r["proto"], "service": r["service"], "first_seen": r["first_seen"],
+             "last_seen": r["last_seen"], "open": r["last_seen"] == scanned} for r in rows]
+
+
 def online_spans(conn, mac: str, start: int, end: int, offline_after: int) -> dict:
     """When a device was online between start and end, as [from, to] pairs.
 
@@ -196,6 +202,8 @@ def make_handler(db_path: str, ntfy_url: str = "", dashboard_url: str = "",
                     "device": device_json(row, pausable),
                     "history": online_spans(conn, mac, since, now, offline_after),
                     "events": events_json(conn, 100, mac),
+                    "ports_scanned": row["ports_scanned"],
+                    "ports": ports_json(conn, mac, row["ports_scanned"]),
                 })
             finally:
                 conn.close()

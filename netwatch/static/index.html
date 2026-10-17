@@ -115,6 +115,8 @@
   dl.facts { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 6px 16px; margin: 0; }
   dl.facts dt { color: var(--muted); }
   dl.facts dd { margin: 0; overflow-wrap: anywhere; }
+  .port-row { display: grid; grid-template-columns: 6em minmax(0, 1fr) auto; gap: 8px; padding: 3px 0; }
+  .port-row.closed { opacity: .55; }
   .uptime { font-size: 26px; font-weight: 650; font-variant-numeric: tabular-nums; }
   .tl { margin-top: 10px; }
   .tl-row { display: grid; grid-template-columns: 56px minmax(0, 1fr); gap: 8px; align-items: center; margin: 5px 0;
@@ -208,6 +210,7 @@
       <section class="panel"><h2>Details</h2><dl class="facts" id="d-facts"></dl></section>
       <section class="panel"><h2>Online, last 7 days</h2><div id="d-history"></div></section>
       <section class="panel"><h2>DNS lookups</h2><div id="d-dns"></div></section>
+      <section class="panel"><h2>Open ports</h2><div id="d-ports"></div></section>
       <section class="panel"><h2>Activity</h2><ul class="events" id="d-events"></ul></section>
     </div>
   </div>
@@ -237,6 +240,8 @@
         <span>Arrivals &amp; departures of 🔔 devices<div class="hint">Click the bell on a device row to watch it. <span id="watch-count"></span></div></span></label>
       <label class="row"><input type="checkbox" data-s="down_alerts">
         <span>🚨 Offline alerts<div class="hint">A device you've set a 🚨 time on hasn't answered for that long, and again when it's back. Sent at high priority. <span id="down-count"></span></div></span></label>
+      <label class="row"><input type="checkbox" data-s="port_alerts">
+        <span>New open ports<div class="hint">The weekly port scan finds a device accepting connections on a port it never had open before.</div></span></label>
     </div>
     <div class="group">
       <h3>Snooze</h3>
@@ -691,7 +696,7 @@ function route() {
     return renderDevices();
   }
   window.scrollTo(0, 0);
-  for (const id of ["d-name", "d-status", "d-actions", "d-facts", "d-history", "d-events"]) $(id).replaceChildren();
+  for (const id of ["d-name", "d-status", "d-actions", "d-facts", "d-history", "d-ports", "d-events"]) $(id).replaceChildren();
   $("d-name").textContent = "Loading…";
   $("d-dot").className = "dot";
   loadDetail();
@@ -740,7 +745,25 @@ function renderDetail() {
     [el("dt", { textContent: k }), el("dd", { textContent: v, className: cls || "" })]));
 
   renderHistory(h);
+  renderPorts(detail.ports, detail.ports_scanned);
   renderEvents(detail.events, $("d-events"));
+}
+
+function renderPorts(ports, scanned) {
+  const note = (text) => el("div", { className: "hint", style: "margin-top:10px", textContent: text });
+  const schedule = "NetWatch scans the 1,000 most common TCP ports on every online device each Sunday morning.";
+  if (!scanned) return $("d-ports").replaceChildren(el("div", { className: "empty", textContent: "Not scanned yet." }), note(schedule));
+  const open = ports.filter((p) => p.open), closed = ports.filter((p) => !p.open);
+  const row = (p) => el("div", { className: "port-row" + (p.open ? "" : " closed") },
+    el("span", { className: "mono", textContent: `${p.port}/${p.proto}` }),
+    el("span", { textContent: p.service || "" }),
+    el("span", { className: "sub", textContent: p.open ? "since " + new Date(p.first_seen * 1000).toLocaleDateString()
+                                                       : "closed, last open " + new Date(p.last_seen * 1000).toLocaleDateString() }));
+  $("d-ports").replaceChildren(
+    el("div", { className: "sub", style: "margin-bottom:6px",
+      textContent: (open.length ? `${open.length} open` : "No open ports") + " · scanned " + ago(scanned) }),
+    ...open.map(row), ...closed.map(row),
+    note(schedule + " You're alerted when a port opens that this device never had open before."));
 }
 
 function renderHistory(h) {

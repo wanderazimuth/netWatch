@@ -7,7 +7,7 @@ import time
 from datetime import datetime
 
 from . import config as config_mod
-from . import db, notify, pause, scanner, tracker
+from . import db, notify, pause, portscan, scanner, tracker
 from .deco import Deco
 from .info import merge_info
 from .pihole import PiholeClient
@@ -79,6 +79,23 @@ def cmd_scan(cfg, conn, args) -> None:
     cmd_devices(cfg, conn, args)
 
 
+def cmd_portscan(cfg, conn, args) -> None:
+    scanned = portscan.targets(conn)
+    if not scanned:
+        log.info("no devices online to scan")
+        return
+    log.info("port scanning %d devices", len(scanned))
+    results = portscan.parse(portscan.run_nmap(sorted(scanned)))
+    events = portscan.record(conn, scanned, results, int(time.time()))
+    names = {r["mac"]: db.display_name(r) for r in conn.execute("SELECT * FROM devices")}
+    for ip, ports in sorted(results.items(), key=lambda kv: ipaddress.ip_address(kv[0])):
+        if ports and scanned.get(ip) in names:
+            print(f"{ip:<16}{names[scanned[ip]][:31]:<32}{', '.join(map(str, ports))}")
+    if missed := sorted(set(scanned) - set(results)):
+        log.warning("scan timed out for %s", ", ".join(missed))
+    notify.send(events, conn, cfg.ntfy_url, cfg.dashboard_url)
+
+
 def cmd_devices(cfg, conn, args) -> None:
     rows = conn.execute("SELECT * FROM devices").fetchall()
     rows.sort(key=lambda r: (not r["online"], ipaddress.ip_address(r["ip"]) if r["ip"] else ipaddress.ip_address("255.255.255.255")))
@@ -122,6 +139,8 @@ def main() -> None:
     sub.add_parser("run", help="scan forever (what the systemd service runs)").set_defaults(func=cmd_run)
     sub.add_parser("scan", help="scan once and print devices").set_defaults(func=cmd_scan)
     sub.add_parser("devices", help="list known devices").set_defaults(func=cmd_devices)
+    sub.add_parser("portscan", help="port scan online devices and alert on new open ports (weekly timer)"
+                   ).set_defaults(func=cmd_portscan)
     p = sub.add_parser("events", help="show recent join/leave events")
     p.add_argument("-n", "--limit", type=int, default=50)
     p.set_defaults(func=cmd_events)

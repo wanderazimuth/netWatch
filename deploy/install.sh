@@ -13,7 +13,8 @@ fi
 
 id netwatch &>/dev/null || useradd --system --no-create-home --shell /usr/sbin/nologin netwatch
 
-apt-get install -y --no-install-recommends python3-venv
+# nmap: the weekly port scan.
+apt-get install -y --no-install-recommends python3-venv nmap
 
 [[ -d $APP_DIR/.venv ]] || python3 -m venv "$APP_DIR/.venv"
 "$APP_DIR/.venv/bin/pip" install --quiet --upgrade "$APP_DIR[deco]"
@@ -24,10 +25,12 @@ if [[ ! -f $CONF_DIR/config.toml ]]; then
     echo "created $CONF_DIR/config.toml -- review it before starting"
 fi
 
-for unit in netwatch netwatch-web; do
-    install -m 644 "$APP_DIR/deploy/$unit.service" "/etc/systemd/system/$unit.service"
+for unit in netwatch.service netwatch-web.service netwatch-portscan.service netwatch-portscan.timer; do
+    install -m 644 "$APP_DIR/deploy/$unit" "/etc/systemd/system/$unit"
 done
 systemctl daemon-reload
 systemctl enable netwatch netwatch-web
+systemctl enable --now netwatch-portscan.timer
 systemctl restart netwatch netwatch-web
 systemctl --no-pager status netwatch netwatch-web
+systemctl --no-pager list-timers netwatch-portscan.timer
