@@ -52,16 +52,18 @@ def events_json(conn, limit: int) -> list[dict]:
 
 
 def make_handler(db_path: str):
-    index_html = resources.files("netwatch").joinpath("static/index.html").read_bytes()
+    static = resources.files("netwatch").joinpath("static")
+    index_html = static.joinpath("index.html").read_bytes()
+    favicon = static.joinpath("favicon.svg").read_bytes()
 
     class Handler(BaseHTTPRequestHandler):
         server_version = "NetWatch"
 
-        def _send(self, status: int, body: bytes, content_type: str) -> None:
+        def _send(self, status: int, body: bytes, content_type: str, cache: str = "no-store") -> None:
             self.send_response(status)
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(body)))
-            self.send_header("Cache-Control", "no-store")
+            self.send_header("Cache-Control", cache)
             self.end_headers()
             self.wfile.write(body)
 
@@ -72,6 +74,9 @@ def make_handler(db_path: str):
             url = urlparse(self.path)
             if url.path == "/":
                 return self._send(200, index_html, "text/html; charset=utf-8")
+            # Browsers also probe /favicon.ico (e.g. for bookmarks); modern ones accept SVG there.
+            if url.path in ("/favicon.svg", "/favicon.ico"):
+                return self._send(200, favicon, "image/svg+xml", cache="max-age=86400")
             if url.path in ("/api/devices", "/api/events"):
                 conn = db.connect(db_path)
                 try:

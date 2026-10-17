@@ -69,6 +69,11 @@ class WebTest(unittest.TestCase):
         self.assertEqual(self.post(f"/api/devices/{TV}/label", {"label": "x"}, "text/plain"), 415)
         self.assertEqual(self.post("/api/devices/aa:aa:aa:aa:aa:aa/label", {"label": "x"}), 404)
 
+    def test_favicon(self):
+        status, body = self.get("/favicon.svg")
+        self.assertEqual(status, 200)
+        self.assertTrue(body.startswith(b"<svg"))
+
     def test_unknown_path(self):
         with self.assertRaises(urllib.error.HTTPError) as cm:
             self.get("/nope")

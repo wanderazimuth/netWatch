@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#1d4ed8"/>
+      <stop offset="1" stop-color="#0b1530"/>
+    </linearGradient>
+    <!-- Sweep fades from the leading edge back toward the trailing edge -->
+    <linearGradient id="sweep" gradientUnits="userSpaceOnUse" x1="49" y1="24" x2="36" y2="10">
+      <stop offset="0" stop-color="#38bdf8" stop-opacity=".95"/>
+      <stop offset="1" stop-color="#38bdf8" stop-opacity=".05"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="14" fill="url(#bg)"/>
+  <circle cx="32" cy="32" r="22" fill="none" stroke="#7dd3fc" stroke-opacity=".5" stroke-width="3"/>
+  <circle cx="32" cy="32" r="11.5" fill="none" stroke="#7dd3fc" stroke-opacity=".5" stroke-width="3"/>
+  <path d="M32 32 L32 10 A22 22 0 0 1 51.05 21 Z" fill="url(#sweep)"/>
+  <line x1="32" y1="32" x2="51.05" y2="21" stroke="#e0f2fe" stroke-width="3" stroke-linecap="round"/>
+  <!-- devices: one known (green), one just discovered (orange) -->
+  <circle cx="42" cy="45" r="4.5" fill="#4ade80"/>
+  <circle cx="19" cy="24" r="4.5" fill="#f59e0b"/>
+  <circle cx="32" cy="32" r="3.5" fill="#e0f2fe"/>
+</svg>
