@@ -108,6 +108,16 @@ def push(ntfy_url: str, title: str, body: str, priority: str = "default", tags: 
     urllib.request.urlopen(req, timeout=10).close()
 
 
+def heartbeat(url: str) -> bool:
+    """Ping a dead-man's-switch monitor, which alerts you when the pings stop."""
+    try:
+        urllib.request.urlopen(url, timeout=10).close()
+        return True
+    except Exception as e:
+        log.debug("heartbeat ping failed: %s", e)
+        return False
+
+
 def send(events: list[Event], conn: sqlite3.Connection, ntfy_url: str = "", click: str = "",
          now: datetime | None = None) -> None:
     for e in events:

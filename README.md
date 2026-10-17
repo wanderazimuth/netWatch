@@ -106,6 +106,16 @@ What gets pushed is controlled from the dashboard's **Alerts** button, no SSH ne
 
 Several changes in one scan arrive as one notification, not a burst.
 
+## Is the Pi itself up?
+
+Alerts are sent by the Pi, so if it loses power, crashes or loses its network,
+nothing would tell you. Set `heartbeat_url` to the ping URL of a check on
+[healthchecks.io](https://healthchecks.io) (free) and NetWatch pings it after
+every successful scan. Give the check a period of 1 minute and a grace time of
+10 minutes, and connect it to your ntfy topic or email: when pings stop -- Pi
+down, NetWatch stuck, or the house internet out -- it alerts you, and again when
+they resume.
+
 ## Weekly port scan
 
 Every Sunday around 10:00 a systemd timer runs `netwatch portscan`, which

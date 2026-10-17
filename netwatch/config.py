@@ -40,6 +40,7 @@ class Config:
     db_path: str = "/var/lib/netwatch/netwatch.db"
     ntfy_url: str = ""
     dashboard_url: str = ""  # tapping an alert opens this
+    heartbeat_url: str = ""  # pinged after every successful scan, so an outside monitor notices if the Pi dies
     pihole: PiholeConfig | None = None
     deco: DecoConfig | None = None
 

@@ -63,12 +63,20 @@ def maintain_pauses(cfg: config_mod.Config, conn) -> None:
 def cmd_run(cfg, conn, args) -> None:
     log.info("watching %s on %s every %ds", cfg.network, cfg.interface, cfg.scan_interval)
     deco = make_deco(cfg)
+    heartbeat_ok = True
     while True:
         started = time.monotonic()
         try:
             notify.send(scan_once(cfg, conn, deco), conn, cfg.ntfy_url, cfg.dashboard_url)
         except Exception:
             log.exception("scan failed")
+        else:
+            # Only after a good scan: a stuck or failing scanner should look as dead as a dead Pi.
+            if cfg.heartbeat_url:
+                ok = notify.heartbeat(cfg.heartbeat_url)
+                if ok != heartbeat_ok:  # log changes, not a line a minute while the internet is down
+                    (log.info if ok else log.warning)("heartbeat ping %s", "working again" if ok else "failing")
+                heartbeat_ok = ok
         maintain_pauses(cfg, conn)
         time.sleep(max(0.0, cfg.scan_interval - (time.monotonic() - started)))
 

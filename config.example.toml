@@ -21,6 +21,12 @@ db_path = "/var/lib/netwatch/netwatch.db"
 # ntfy_url = "https://ntfy.sh/netwatch-change-me-to-something-random"
 # dashboard_url = "http://192.168.0.10:8080"   # opened when you tap an alert
 
+# Optional: alerts come from the Pi, so nothing tells you if the Pi itself dies.
+# Set this to a dead-man's-switch URL (e.g. a https://healthchecks.io check's
+# ping URL) and NetWatch fetches it after every successful scan; the service
+# alerts you when the pings stop.
+# heartbeat_url = "https://hc-ping.com/your-check-uuid"
+
 # Optional: pull device names and connection type (wired / 2.4 / 5 GHz) from a
 # TP-Link Deco mesh. Uses the Deco's unofficial local API. The password is the
 # Deco owner's password (usually your TP-Link ID password) -- keep it in its own
