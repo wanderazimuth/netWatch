@@ -16,6 +16,12 @@ class DeviceInfo:
     vendor: str | None
 
 
+def usable_name(name: str | None) -> bool:
+    # Pi-hole's network table can carry its own PTR name ("pi.hole") against
+    # unrelated clients, so it says nothing about the device.
+    return bool(name) and name.lower().rstrip(".") != "pi.hole"
+
+
 class PiholeClient:
     def __init__(self, url: str, password: str, timeout: float = 5.0):
         self.url = url.rstrip("/")
@@ -53,6 +59,6 @@ class PiholeClient:
             mac = (dev.get("hwaddr") or "").lower()
             if not mac or mac.startswith("ip-"):  # Pi-hole uses "ip-<addr>" for clients with no known MAC
                 continue
-            name = next((ip["name"] for ip in dev.get("ips", []) if ip.get("name")), None)
+            name = next((ip["name"] for ip in dev.get("ips", []) if usable_name(ip.get("name"))), None)
             info[mac] = DeviceInfo(hostname=name, vendor=dev.get("macVendor") or None)
         return info

@@ -1,7 +1,7 @@
 import unittest
 
 from netwatch import db
-from netwatch.pihole import DeviceInfo
+from netwatch.pihole import DeviceInfo, usable_name
 from netwatch.scanner import Sighting, is_randomized_mac
 from netwatch.tracker import apply_scan
 
@@ -50,6 +50,12 @@ class TrackerTest(unittest.TestCase):
     def test_randomized_mac(self):
         self.assertTrue(is_randomized_mac("da:a1:19:00:00:01"))
         self.assertFalse(is_randomized_mac(TV))
+
+    def test_pihole_placeholder_name_ignored(self):
+        self.assertFalse(usable_name("pi.hole"))
+        self.assertFalse(usable_name("PI.HOLE."))
+        self.assertFalse(usable_name(None))
+        self.assertTrue(usable_name("living-room-tv"))
 
 
 if __name__ == "__main__":
