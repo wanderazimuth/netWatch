@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import ipaddress
 import logging
 import time
 from datetime import datetime
@@ -44,7 +45,8 @@ def cmd_scan(cfg, conn, args) -> None:
 
 
 def cmd_devices(cfg, conn, args) -> None:
-    rows = conn.execute("SELECT * FROM devices ORDER BY online DESC, ip").fetchall()
+    rows = conn.execute("SELECT * FROM devices").fetchall()
+    rows.sort(key=lambda r: (not r["online"], ipaddress.ip_address(r["ip"]) if r["ip"] else ipaddress.ip_address("255.255.255.255")))
     print(f"{'':2}{'IP':<16}{'MAC':<19}{'NAME':<32}LAST SEEN")
     for r in rows:
         mark = "* " if r["online"] else "  "
