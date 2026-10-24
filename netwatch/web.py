@@ -143,6 +143,13 @@ def make_handler(db_path: str, ntfy_url: str = "", dashboard_url: str = "",
     index_html = static.joinpath("index.html").read_bytes()
     pausable = frozenset(pihole.pausable) if pihole is not None else frozenset()
     favicon = static.joinpath("favicon.svg").read_bytes()
+    # What makes the page an installable app: the manifest, its icons and the offline service worker.
+    app_files = {path: (static.joinpath(path[1:]).read_bytes(), kind) for path, kind in (
+        ("/manifest.webmanifest", "application/manifest+json"),
+        ("/sw.js", "text/javascript; charset=utf-8"),
+        ("/icon-192.png", "image/png"),
+        ("/icon-512.png", "image/png"),
+    )}
 
     class Handler(BaseHTTPRequestHandler):
         server_version = "NetWatch"
@@ -165,6 +172,8 @@ def make_handler(db_path: str, ntfy_url: str = "", dashboard_url: str = "",
             # Browsers also probe /favicon.ico (e.g. for bookmarks); modern ones accept SVG there.
             if url.path in ("/favicon.svg", "/favicon.ico"):
                 return self._send(200, favicon, "image/svg+xml", cache="max-age=86400")
+            if url.path in app_files:
+                return self._send(200, *app_files[url.path])
             if url.path == "/api/settings":
                 conn = db.connect(db_path)
                 try:

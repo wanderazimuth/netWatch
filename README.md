@@ -48,6 +48,14 @@ uptime, its join/leave history, and its top DNS lookups from Pi-hole over the
 last 24 hours (needs the `[pihole]` config section). There is no login: anyone on
 the LAN can view it and rename devices, so don't expose port 8080 to the internet.
 
+**On the phone.** Away from home it's reached over Tailscale, which the
+[piServer](https://github.com/wanderazimuth/piServer) repo sets up, at
+`https://raspberrypi.<tailnet>.ts.net:8443` (your signed-in devices only). Open that in Chrome
+and choose **Add to Home screen > Install** to get NetWatch as an app. The app keeps the page and
+the last device list; when the Pi can't be reached it opens with that copy and the header says when
+it was saved. Device details, renaming and pausing need the Pi. Installing needs HTTPS, so use the
+tailnet address, not http://netwatch.lan.
+
 ## Pause internet
 
 The device page's **Pause internet** button blocks every DNS lookup from that

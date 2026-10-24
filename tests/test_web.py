@@ -54,6 +54,15 @@ class WebTest(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertIn(b"<title>NetWatch</title>", body)
 
+    def test_app_files(self):
+        # What makes the page installable on the phone: the manifest, its icons and the service worker.
+        for path, kind in (("/manifest.webmanifest", "application/manifest+json"), ("/sw.js", "text/javascript"),
+                           ("/icon-192.png", "image/png"), ("/icon-512.png", "image/png")):
+            with urllib.request.urlopen(self.base + path) as r:
+                self.assertEqual(r.headers.get_content_type(), kind)
+        icons = json.loads(self.get("/manifest.webmanifest")[1])["icons"]
+        self.assertTrue({"192x192", "512x512"} <= {i["sizes"] for i in icons})
+
     def test_devices_and_events(self):
         devices = json.loads(self.get("/api/devices")[1])["devices"]
         self.assertEqual([(d["mac"], d["ip"], d["online"]) for d in devices], [(TV, "192.168.0.20", True)])

@@ -5,6 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>NetWatch</title>
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#1d4ed8">
 <style>
   :root {
     color-scheme: light dark;
@@ -25,6 +27,7 @@
   h1 { font-size: 20px; margin: 0; }
   h2 { font-size: 14px; margin: 0 0 10px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
   .updated { color: var(--muted); font-size: 12px; }
+  .updated.offline { color: var(--new); font-weight: 600; }
   .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin: 16px 0; }
   .stat { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; }
   .stat .v { font-size: 26px; font-weight: 650; font-variant-numeric: tabular-nums; }
@@ -509,10 +512,13 @@ function showError(msg) {
 
 async function refresh() {
   try {
-    const [d, e] = await Promise.all([
-      fetch("/api/devices").then((r) => r.json()),
+    const [dr, e] = await Promise.all([
+      fetch("/api/devices"),
       fetch("/api/events?limit=200").then((r) => r.json()),
     ]);
+    const d = await dr.json();
+    // The service worker's saved copy, when the Pi couldn't be reached.
+    const saved = dr.headers.get("X-NetWatch-Saved");
     devices = d.devices;
     serverNow = d.now;
     $("s-online").textContent = devices.filter((x) => x.online).length;
@@ -522,7 +528,10 @@ async function refresh() {
     renderDevices();
     renderEvents(e.events);
     if (detailMac) loadDetail();
-    $("updated").textContent = "Updated " + new Date().toLocaleTimeString();
+    $("updated").textContent = saved
+      ? "Offline: showing the list saved " + new Date(saved).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })
+      : "Updated " + new Date().toLocaleTimeString();
+    $("updated").classList.toggle("offline", !!saved);
     showError("");
   } catch (err) {
     showError("Can't reach NetWatch: " + err.message);
@@ -845,6 +854,8 @@ window.onhashchange = route;
 route();
 refresh().then(loadSettings);
 setInterval(() => { refresh(); loadSettings(); }, 30000);
+// Installable app with offline data. Browsers only allow it over HTTPS (the tailnet name), not http://netwatch.lan.
+if ("serviceWorker" in navigator && isSecureContext) navigator.serviceWorker.register("/sw.js").catch(() => {});
 </script>
 </body>
 </html>
