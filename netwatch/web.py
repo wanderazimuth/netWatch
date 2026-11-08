@@ -9,6 +9,8 @@ from __future__ import annotations
 import json
 import logging
 import re
+import socket
+import struct
 import time
 from collections import Counter
 from typing import TYPE_CHECKING
@@ -16,7 +18,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib import resources
 from urllib.parse import parse_qs, urlparse
 
-from . import db, notify
+from . import db, inventory, notify
 from . import pause as pause_mod
 from . import settings as settings_mod
 from .pihole import PiholeClient
@@ -27,7 +29,7 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
-DEVICE_PATH = re.compile(r"/api/devices/([0-9a-f]{2}(?::[0-9a-f]{2}){5})/(label|notify|down_after|pause|resume)")
+DEVICE_PATH = re.compile(r"/api/devices/([0-9a-f]{2}(?::[0-9a-f]{2}){5})/(label|notify|down_after|pause|resume|review)")
 MAX_PAUSE = 7 * 86400
 DEVICE_INFO_PATH = re.compile(r"/api/devices/([0-9a-f]{2}(?::[0-9a-f]{2}){5})(/dns)?")
 MAX_HISTORY = 31 * 86400
@@ -43,7 +45,7 @@ BLOCKED = {
 DOWN_AFTER_MIN, DOWN_AFTER_MAX = 2, 7 * 24 * 60
 
 
-def device_json(r, pausable: frozenset[str] = frozenset()) -> dict:
+def device_json(r, pausable: frozenset[str] = frozenset(), gateway: str | None = None) -> dict:
     return {
         "mac": r["mac"],
         "ip": r["ip"],
@@ -61,13 +63,39 @@ def device_json(r, pausable: frozenset[str] = frozenset()) -> dict:
         "down": r["down_since"] is not None,
         "paused": r["paused_ip"] is not None,
         "paused_until": r["paused_until"],
-        "pausable": r["mac"] in pausable,
+        "pausable": can_pause(r, pausable, gateway),
         "randomized": is_randomized_mac(r["mac"]),
+        "status": r["status"] or "review",
+        "reviewed": r["reviewed"],
+        "kind": r["kind"],
+        "floor": r["floor"],
+        "room": r["room"],
+        "person": r["person"],
+        "notes": r["notes"],
     }
 
 
-def devices_json(conn, pausable: frozenset[str] = frozenset()) -> list[dict]:
-    return [device_json(r, pausable) for r in conn.execute("SELECT * FROM devices")]
+def default_gateway(route_file: str = "/proc/net/route") -> str | None:
+    """The router's IP, from the Pi's routing table."""
+    try:
+        with open(route_file) as f:
+            for line in f.readlines()[1:]:
+                _, dest, gateway, flags = line.split()[:4]
+                if dest == "00000000" and int(flags, 16) & 2:  # the default route, via a gateway
+                    return socket.inet_ntoa(struct.pack("<L", int(gateway, 16)))
+    except (OSError, ValueError):
+        pass
+    return None
+
+
+def can_pause(r, pausable: frozenset[str], gateway: str | None = None) -> bool:
+    """Devices listed in config, and ones still to review: they aren't known to be yours yet,
+    and pausing one is a way to find out what it is. Never the router, though."""
+    return r["mac"] in pausable or (r["status"] is None and r["ip"] != gateway)
+
+
+def devices_json(conn, pausable: frozenset[str] = frozenset(), gateway: str | None = None) -> list[dict]:
+    return [device_json(r, pausable, gateway) for r in conn.execute("SELECT * FROM devices")]
 
 
 def events_json(conn, limit: int, mac: str | None = None) -> list[dict]:
@@ -142,6 +170,7 @@ def make_handler(db_path: str, ntfy_url: str = "", dashboard_url: str = "",
     static = resources.files("netwatch").joinpath("static")
     index_html = static.joinpath("index.html").read_bytes()
     pausable = frozenset(pihole.pausable) if pihole is not None else frozenset()
+    gateway = default_gateway()
     favicon = static.joinpath("favicon.svg").read_bytes()
     # What makes the page an installable app: the manifest, its icons and the offline service worker.
     app_files = {path: (static.joinpath(path[1:]).read_bytes(), kind) for path, kind in (
@@ -184,7 +213,7 @@ def make_handler(db_path: str, ntfy_url: str = "", dashboard_url: str = "",
                 conn = db.connect(db_path)
                 try:
                     if url.path == "/api/devices":
-                        return self._json({"now": int(time.time()), "devices": devices_json(conn, pausable)})
+                        return self._json({"now": int(time.time()), "devices": devices_json(conn, pausable, gateway)})
                     limit = int(parse_qs(url.query).get("limit", ["100"])[0])
                     return self._json({"events": events_json(conn, min(max(limit, 1), 1000))})
                 finally:
@@ -208,7 +237,7 @@ def make_handler(db_path: str, ntfy_url: str = "", dashboard_url: str = "",
                 since = min(max(since, now - MAX_HISTORY), now)
                 return self._json({
                     "now": now,
-                    "device": device_json(row, pausable),
+                    "device": device_json(row, pausable, gateway),
                     "history": online_spans(conn, mac, since, now, offline_after),
                     "events": events_json(conn, 100, mac),
                     "ports_scanned": row["ports_scanned"],
@@ -238,14 +267,31 @@ def make_handler(db_path: str, ntfy_url: str = "", dashboard_url: str = "",
 
         def _settings(self, conn) -> dict:
             return {**settings_mod.load(conn), "ntfy_configured": bool(ntfy_url), "pihole_configured": pihole is not None,
-                    "now": int(time.time())}
+                    "floors": inventory.FLOORS, "kinds": inventory.KINDS, "now": int(time.time())}
+
+        def _review(self, conn, mac: str, body: dict):
+            row = conn.execute("SELECT * FROM devices WHERE mac = ?", (mac,)).fetchone()
+            if row is None:
+                return self._json({"error": "unknown device"}, 404)
+            try:
+                updates = inventory.clean(body, settings_mod.load(conn)["people"], row["person"])
+            except ValueError as e:
+                return self._json({"error": str(e)}, 400)
+            if updates:
+                # Column names come from inventory.clean, never from the request.
+                conn.execute(f"UPDATE devices SET {', '.join(k + ' = ?' for k in updates)} WHERE mac = ?",
+                             (*updates.values(), mac))
+                conn.commit()
+            row = conn.execute("SELECT * FROM devices WHERE mac = ?", (mac,)).fetchone()
+            return self._json({"ok": True, "device": device_json(row, pausable, gateway)})
 
         def _pause(self, conn, mac: str, action: str, body: dict):
             if pihole is None:
                 return self._json({"error": "Pi-hole isn't set up in config.toml"}, 409)
             # Resuming only puts things back, so it's always allowed.
-            if action == "pause" and mac not in pausable:
-                return self._json({"error": "this device isn't in the pausable list in config.toml"}, 403)
+            row = conn.execute("SELECT * FROM devices WHERE mac = ?", (mac,)).fetchone()
+            if action == "pause" and row is not None and not can_pause(row, pausable, gateway):
+                return self._json({"error": "only devices still to review, or in the pausable list in config.toml, can be paused"}, 403)
             until, now = body.get("until"), int(time.time())
             if action == "pause" and until is not None and not (
                 isinstance(until, int) and not isinstance(until, bool) and now < until <= now + MAX_PAUSE
@@ -266,7 +312,7 @@ def make_handler(db_path: str, ntfy_url: str = "", dashboard_url: str = "",
                 return self._json({"error": f"Pi-hole {action} failed: {e}"}, 502)
             pause_mod.touch(pihole.sync_trigger)
             row = conn.execute("SELECT * FROM devices WHERE mac = ?", (mac,)).fetchone()
-            return self._json({"ok": True, "device": device_json(row, pausable)})
+            return self._json({"ok": True, "device": device_json(row, pausable, gateway)})
 
         def do_POST(self):
             path = urlparse(self.path).path
@@ -306,6 +352,8 @@ def make_handler(db_path: str, ntfy_url: str = "", dashboard_url: str = "",
                 mac, field = m.groups()
                 if field in ("pause", "resume"):
                     return self._pause(conn, mac, field, body)
+                if field == "review":
+                    return self._review(conn, mac, body)
                 if field == "label":
                     value = (body.get("label") or "").strip()[:64] or None
                     cur = conn.execute("UPDATE devices SET label = ? WHERE mac = ?", (value, mac))

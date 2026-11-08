@@ -1,4 +1,4 @@
-"""Alert settings, stored in the database so the dashboard can change them live."""
+"""Alert settings and the people list, stored in the database so the dashboard can change them live."""
 
 from __future__ import annotations
 
@@ -17,7 +17,9 @@ DEFAULTS = {
     "quiet_end": "",
     "quiet_mode": "silent",  # during quiet hours: "silent" (no sound) or "skip" (don't send)
     "snooze_until": 0,  # unix seconds; no alerts before this
+    "people": ["Roy", "Shanna", "Shaleece", "Spencer", "Fenly"],  # who a device can belong to
 }
+MAX_PEOPLE, MAX_PERSON = 30, 32
 
 TIME = re.compile(r"(?:[01]\d|2[0-3]):[0-5]\d")
 
@@ -46,6 +48,14 @@ def validate(updates: dict) -> dict:
         elif key == "quiet_mode":
             if value not in ("silent", "skip"):
                 raise ValueError("quiet_mode must be 'silent' or 'skip'")
+        elif key == "people":
+            if not isinstance(value, list) or not all(isinstance(p, str) for p in value):
+                raise ValueError("people must be a list of names")
+            value = [p.strip()[:MAX_PERSON] for p in value if p.strip()]
+            if len(set(value)) != len(value):
+                raise ValueError("people has the same name twice")
+            if len(value) > MAX_PEOPLE:
+                raise ValueError(f"people can have at most {MAX_PEOPLE} names")
         elif key == "snooze_until":
             if not isinstance(value, int) or isinstance(value, bool) or value < 0:
                 raise ValueError("snooze_until must be a unix timestamp")

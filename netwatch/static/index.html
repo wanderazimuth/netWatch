@@ -136,6 +136,23 @@
   .dns-row .bar { position: absolute; left: 0; bottom: -1px; height: 2px; background: var(--accent); opacity: .6; }
   .dns-row.blocked .dom { color: var(--down); }
   .dns-row.blocked .bar { background: var(--down); }
+  .stat.clickable { cursor: pointer; }
+  .stat.clickable:hover { border-color: var(--accent); }
+  .tag.review { border-color: var(--accent); color: var(--accent); }
+  .kind { margin-right: 6px; }
+  .form { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 8px 12px; align-items: center; }
+  .form label { color: var(--muted); }
+  .form input[type=text], .form textarea, .form select { font: inherit; padding: 6px 8px; border: 1px solid var(--border);
+    border-radius: 7px; background: var(--bg); color: var(--text); width: 100%; min-width: 0; }
+  .form textarea { resize: vertical; min-height: 4.5em; }
+  .form .pair { display: flex; gap: 6px; align-items: center; }
+  .form .full { grid-column: 1 / -1; }
+  .linkish { border: 0; background: none; color: var(--accent); font: inherit; cursor: pointer; padding: 0; white-space: nowrap; }
+  .review-bar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 16px;
+                border-color: var(--accent); }
+  .review-bar strong { margin-right: auto; }
+  dialog textarea { font: inherit; width: 100%; padding: 6px 8px; border: 1px solid var(--border); border-radius: 7px;
+                    background: var(--bg); color: var(--text); }
   @media (max-width: 900px) {
     .detail-grid { grid-template-columns: minmax(0, 1fr); }
     .layout { grid-template-columns: minmax(0, 1fr); }
@@ -158,7 +175,7 @@
   <div id="list-view">
   <section class="stats">
     <div class="stat"><div class="v" id="s-online">–</div><div class="k">Online now</div></div>
-    <div class="stat"><div class="v" id="s-known">–</div><div class="k">Known devices</div></div>
+    <div class="stat clickable" id="s-review-box" title="Show the devices still to review"><div class="v" id="s-review">–</div><div class="k" id="s-review-k">To review</div></div>
     <div class="stat"><div class="v" id="s-new">–</div><div class="k">New in last 24h</div></div>
     <div class="stat"><div class="v" id="s-events">–</div><div class="k">Events in last 24h</div></div>
   </section>
@@ -166,12 +183,14 @@
   <div class="layout">
     <section class="panel">
       <div class="toolbar">
-        <input type="search" id="q" placeholder="Search name, IP, MAC, vendor, wired / 5 GHz…">
+        <input type="search" id="q" placeholder="Search name, room, person, IP, MAC, vendor, 5 GHz…">
         <div class="seg" id="filter">
           <button data-f="all" class="active">All</button>
           <button data-f="online">Online</button>
           <button data-f="offline">Offline</button>
+          <button data-f="review">To review</button>
         </div>
+        <button class="btn primary" id="review-start" hidden>Start reviewing</button>
       </div>
       <div class="table-wrap">
       <table>
@@ -200,6 +219,10 @@
   </div>
 
   <div id="detail-view" hidden>
+    <div class="panel review-bar" id="review-bar" hidden>
+      <strong id="review-progress"></strong>
+      <button class="btn" id="review-stop">Stop reviewing</button>
+    </div>
     <a href="#" class="back">← All devices</a>
     <div class="panel detail-head">
       <span class="dot" id="d-dot"></span>
@@ -210,6 +233,7 @@
       <div class="actions" id="d-actions"></div>
     </div>
     <div class="detail-grid">
+      <section class="panel"><h2>About this device</h2><div id="d-about"></div></section>
       <section class="panel"><h2>Details</h2><dl class="facts" id="d-facts"></dl></section>
       <section class="panel"><h2>Online, last 7 days</h2><div id="d-history"></div></section>
       <section class="panel"><h2>DNS lookups</h2><div id="d-dns"></div></section>
@@ -318,14 +342,39 @@
   </div>
 </dialog>
 
+<dialog id="people-dlg">
+  <div class="dlg-head">
+    <h2>People</h2>
+    <button class="x" id="people-close" aria-label="Close">×</button>
+  </div>
+  <div class="dlg-body">
+    <p>Who a device can belong to, one name per line:</p>
+    <textarea id="people-list" rows="8"></textarea>
+    <div class="hint" style="margin-top:6px">Taking someone off the list leaves them on the devices they already have.</div>
+    <div class="btns" style="margin-top:10px"><button class="btn primary" id="people-save">Save</button></div>
+    <div class="status" id="people-status"></div>
+  </div>
+</dialog>
+
 <script>
 const $ = (id) => document.getElementById(id);
 const DAY = 86400;
 const ICONS = { new: "★", online: "▲", offline: "▼", ip_change: "⇄" };
 const VERBS = { new: "joined for the first time", online: "came online", offline: "went offline", ip_change: "changed IP to" };
 
+// Labels and icons for the server's inventory.KINDS.
+const KINDS = {
+  phone: ["📱", "Phone"], tablet: ["📖", "Tablet"], computer: ["💻", "Computer"], tv: ["📺", "TV / streaming"],
+  speaker: ["🔊", "Speaker / assistant"], camera: ["📷", "Camera / doorbell"], smart_home: ["💡", "Smart home"],
+  appliance: ["🔌", "Appliance / charger"], printer: ["🖨️", "Printer"], console: ["🎮", "Game console"],
+  wearable: ["⌚", "Watch / wearable"], network: ["📡", "Network gear"], server: ["🗄️", "Server / NAS"], other: ["❔", "Other"],
+};
+const STATUS_TEXT = { review: "To review", known: "Known", guest: "Guest" };
+
 let devices = [], serverNow = 0, filter = "all", sortKey = "ip", sortAsc = true, editing = null, settings = null;
 let detailMac = null, detail = null;
+// The review walk-through: the devices to step through, and the ones skipped this time.
+let reviewing = false, skipped = new Set();
 
 async function post(url, body) {
   const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
@@ -369,17 +418,20 @@ function renderDevices() {
   if (editing) return;  // don't clobber an in-progress label edit
   const q = $("q").value.trim().toLowerCase();
   const list = devices
-    .filter((d) => filter === "all" || (filter === "online") === d.online)
-    .filter((d) => !q || [d.name, d.ip, d.mac, d.vendor, d.hostname, d.connection].some((v) => v && v.toLowerCase().includes(q)))
+    .filter((d) => filter === "all" || (filter === "review" ? d.status === "review" : (filter === "online") === d.online))
+    .filter((d) => !q || [d.name, d.ip, d.mac, d.vendor, d.hostname, d.connection, d.floor, d.room, d.person, d.notes,
+                          d.kind && KINDS[d.kind][1], STATUS_TEXT[d.status]].some((v) => v && v.toLowerCase().includes(q)))
     .sort(compare);
 
   const body = $("rows");
   body.replaceChildren(...list.map((d) => {
+    const about = [place(d), d.person].filter(Boolean).join(" · ");
+    const source = d.label ? d.hostname || d.vendor : d.hostname && d.vendor;
     const nameCell = el("td", {},
+      d.kind ? el("span", { className: "kind", textContent: KINDS[d.kind][0], title: KINDS[d.kind][1] }) : null,
       el("span", { className: "name", textContent: d.name, title: "Click to rename" }),
       ...deviceTags(d),
-      d.label && (d.hostname || d.vendor) ? el("div", { className: "sub", textContent: d.hostname || d.vendor }) : null,
-      !d.label && d.hostname && d.vendor ? el("div", { className: "sub", textContent: d.vendor }) : null,
+      about || source ? el("div", { className: "sub", textContent: [about, source].filter(Boolean).join(" — ") }) : null,
     );
     nameCell.querySelector(".name").onclick = () => startEdit(nameCell, d);
     const row = el("tr", { className: "clickable" + (d.online ? "" : " offline"), title: "Click for details" },
@@ -407,6 +459,8 @@ function renderDevices() {
 function deviceTags(d) {
   const conn = [d.connection, d.deco].filter(Boolean).join(" · ");
   return [
+    d.status === "review" ? el("span", { className: "tag review", textContent: "to review", title: "Not yet marked known or guest" }) : null,
+    d.status === "guest" ? el("span", { className: "tag", textContent: "guest" }) : null,
     conn ? el("span", { className: "tag conn", textContent: conn, title: d.deco ? "Connected through the " + d.deco + " Deco" : "" }) : null,
     serverNow - d.first_seen < DAY ? el("span", { className: "tag new", textContent: "new" }) : null,
     d.down ? el("span", { className: "tag down", textContent: "down", title: "No reply for longer than its offline alert time" }) : null,
@@ -522,11 +576,16 @@ async function refresh() {
     devices = d.devices;
     serverNow = d.now;
     $("s-online").textContent = devices.filter((x) => x.online).length;
-    $("s-known").textContent = devices.length;
+    const toReview = devices.filter((x) => x.status === "review").length;
+    $("s-review").textContent = toReview;
+    $("s-review-k").textContent = `To review, of ${devices.length} devices`;
+    $("review-start").hidden = !toReview;
+    $("review-start").textContent = `Review ${toReview} device${toReview === 1 ? "" : "s"}`;
     $("s-new").textContent = devices.filter((x) => serverNow - x.first_seen < DAY).length;
     $("s-events").textContent = e.events.filter((x) => serverNow - x.ts < DAY).length;
     renderDevices();
     renderEvents(e.events);
+    if (reviewing) renderProgress();
     if (detailMac) loadDetail();
     $("updated").textContent = saved
       ? "Offline: showing the list saved " + new Date(saved).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })
@@ -588,6 +647,7 @@ async function loadSettings() {
   try {
     settings = await fetch("/api/settings").then((r) => r.json());
     renderSettings();
+    if (detail && formMac !== detail.device.mac) renderDetail();  // the About form waits for the people list
   } catch (e) { /* refresh() reports connectivity problems */ }
 }
 
@@ -615,12 +675,13 @@ $("alerts-close").onclick = () => $("alerts").close();
 $("alerts").onclick = (e) => { if (e.target === $("alerts")) $("alerts").close(); };  // click outside closes
 
 $("q").oninput = renderDevices;
-$("filter").onclick = (e) => {
-  if (!e.target.dataset.f) return;
-  filter = e.target.dataset.f;
-  document.querySelectorAll("#filter button").forEach((b) => b.classList.toggle("active", b === e.target));
+function setFilter(f) {
+  filter = f;
+  document.querySelectorAll("#filter button").forEach((b) => b.classList.toggle("active", b.dataset.f === f));
   renderDevices();
-};
+}
+$("filter").onclick = (e) => { if (e.target.dataset.f) setFilter(e.target.dataset.f); };
+$("s-review-box").onclick = () => setFilter("review");
 document.querySelectorAll("th[data-k]").forEach((th) => th.onclick = () => {
   if (sortKey === th.dataset.k) sortAsc = !sortAsc;
   else { sortKey = th.dataset.k; sortAsc = !["online", "last_seen", "first_seen"].includes(sortKey); }
@@ -695,17 +756,22 @@ function weekStart() {
 }
 
 function route() {
-  const m = location.hash.match(/^#\/device\/([0-9a-f]{2}(?::[0-9a-f]{2}){5})$/);
-  detailMac = m ? m[1] : null;
+  // #/device/<mac>, or #/review/<mac> for the same page as a step of the review walk-through.
+  const m = location.hash.match(/^#\/(device|review)\/([0-9a-f]{2}(?::[0-9a-f]{2}){5})$/);
+  detailMac = m ? m[2] : null;
+  reviewing = !!m && m[1] === "review";
   detail = null;
+  formMac = null;
   $("list-view").hidden = !!detailMac;
   $("detail-view").hidden = !detailMac;
+  $("review-bar").hidden = !reviewing;
+  if (reviewing) renderProgress();
   if (!detailMac) {
     document.title = "NetWatch";
     return renderDevices();
   }
   window.scrollTo(0, 0);
-  for (const id of ["d-name", "d-status", "d-actions", "d-facts", "d-history", "d-ports", "d-events"]) $(id).replaceChildren();
+  for (const id of ["d-name", "d-status", "d-actions", "d-about", "d-facts", "d-history", "d-ports", "d-events"]) $(id).replaceChildren();
   $("d-name").textContent = "Loading…";
   $("d-dot").className = "dot";
   loadDetail();
@@ -730,9 +796,10 @@ function renderDetail() {
   const d = detail.device, h = detail.history;
   document.title = d.name + " · NetWatch";
   $("d-dot").className = "dot" + (d.down ? " down" : d.online ? " on" : "");
+  // Renamed in the About form, so the form and the name can't disagree.
   const name = el("span", { className: "name", textContent: d.name, title: "Click to rename" });
-  name.onclick = () => startEdit($("d-name"), d);
-  $("d-name").replaceChildren(name, ...deviceTags(d));
+  name.onclick = () => { const f = $("f-label"); if (f) { f.focus(); f.select(); } };
+  $("d-name").replaceChildren(d.kind ? el("span", { className: "kind", textContent: KINDS[d.kind][0] }) : "", name, ...deviceTags(d));
   const last = h.spans[h.spans.length - 1];
   $("d-status").textContent = (d.paused ? pausedText(d) + ". " : "") + (d.down ? "Down: last seen " + ago(d.last_seen)
     : !d.online ? "Offline: last seen " + ago(d.last_seen)
@@ -749,14 +816,150 @@ function renderDetail() {
     ["Deco", d.deco],
     ["First seen", fullTime(d.first_seen)],
     ["Last seen", d.online ? "now" : fullTime(d.last_seen)],
+    ["Reviewed", d.reviewed && fullTime(d.reviewed)],
   ];
   $("d-facts").replaceChildren(...facts.filter((f) => f[1]).flatMap(([k, v, cls]) =>
     [el("dt", { textContent: k }), el("dd", { textContent: v, className: cls || "" })]));
+  // Rebuilt only for a different device or after saving, so the 30 s refresh can't wipe what you're typing.
+  if (formMac !== d.mac) renderAbout(d);
 
   renderHistory(h);
   renderPorts(detail.ports, detail.ports_scanned);
   renderEvents(detail.events, $("d-events"));
 }
+
+// ---- what the device is and where it lives
+const place = (d) => [d.floor, d.room].filter(Boolean).join(" · ");
+let formMac = null;
+
+function options(select, values, current, none, text = (v) => v) {
+  const list = [...values];
+  if (current && !list.includes(current)) list.push(current);  // e.g. someone since taken off the people list
+  select.replaceChildren(el("option", { value: "", textContent: none }),
+    ...list.map((v) => el("option", { value: v, textContent: text(v) })));
+  select.value = current || "";
+}
+
+function roomList(floor) {
+  const rooms = new Set(devices.filter((x) => x.room && (!floor || x.floor === floor)).map((x) => x.room));
+  $("f-rooms").replaceChildren(...[...rooms].sort().map((r) => el("option", { value: r })));
+}
+
+function renderAbout(d) {
+  const box = $("d-about");
+  if (!settings) { formMac = null; return box.replaceChildren(el("div", { className: "empty", textContent: "Loading…" })); }
+  formMac = d.mac;
+  const field = (id, label, input) => [el("label", { htmlFor: id, textContent: label }), input];
+
+  // In the walk-through, saving is how you say "yes, I know this one".
+  let status = reviewing && d.status === "review" ? "known" : d.status;
+  const seg = el("div", { className: "seg" }, ...Object.entries(STATUS_TEXT).map(([v, text]) => {
+    const b = el("button", { type: "button", textContent: text, className: v === status ? "active" : "" });
+    b.onclick = () => { status = v; seg.querySelectorAll("button").forEach((x) => x.classList.toggle("active", x === b)); };
+    return b;
+  }));
+
+  const kind = el("select", { id: "f-kind" });
+  options(kind, settings.kinds, d.kind, "—", (v) => KINDS[v] ? KINDS[v].join(" ") : v);
+  // A Deco named after a floor is a good first guess at where the device is.
+  const decoFloor = !d.floor && settings.floors.find((f) => d.deco && f.toLowerCase() === d.deco.toLowerCase());
+  const floor = el("select", { id: "f-floor" });
+  options(floor, settings.floors, d.floor || decoFloor, "—");
+  floor.onchange = () => roomList(floor.value);
+  const room = el("input", { type: "text", id: "f-room", value: d.room || "", maxLength: 40, placeholder: "Kitchen, office…" });
+  room.setAttribute("list", "f-rooms");
+  const person = el("select", { id: "f-person" });
+  options(person, settings.people, d.person, "Shared / nobody");
+  const editPeople = el("button", { type: "button", className: "linkish", textContent: "Edit list" });
+  editPeople.onclick = openPeople;
+  const label = el("input", { type: "text", id: "f-label", value: d.label || "", maxLength: 64, placeholder: d.hostname || d.vendor || d.mac });
+  const notes = el("textarea", { id: "f-notes", value: d.notes || "", maxLength: 500, placeholder: "Where exactly, what it does…" });
+  const msg = el("div", { className: "status full" });
+
+  const save = el("button", { type: "button", className: "btn primary", textContent: reviewing ? "Save & next" : "Save" });
+  save.onclick = async () => {
+    save.disabled = true;
+    try {
+      const r = await post(`/api/devices/${d.mac}/review`, {
+        label: label.value, status, kind: kind.value || null, floor: floor.value || null, room: room.value,
+        person: person.value || null, notes: notes.value,
+      });
+      devices = devices.map((x) => (x.mac === d.mac ? r.device : x));
+      if (reviewing) return nextReview(d.mac);
+      detail.device = r.device;
+      formMac = null;
+      renderDetail();
+      renderDevices();
+      $("d-about").querySelector(".status").textContent = "Saved ✓";
+    } catch (e) { msg.textContent = "Not saved: " + e.message; save.disabled = false; }
+  };
+  const buttons = [save];
+  if (reviewing) {
+    const skip = el("button", { type: "button", className: "btn", textContent: "Skip" });
+    skip.onclick = () => { skipped.add(d.mac); nextReview(d.mac); };
+    buttons.push(skip);
+  }
+
+  box.replaceChildren(el("div", { className: "form" },
+    ...field("f-label", "Name", label),
+    el("label", { textContent: "Status" }), seg,
+    ...field("f-kind", "Type", kind),
+    ...field("f-floor", "Floor", el("div", { className: "pair" }, floor,
+      decoFloor ? el("span", { className: "hint", textContent: "guessed from its Deco" }) : null)),
+    ...field("f-room", "Room", room),
+    ...field("f-person", "Person", el("div", { className: "pair" }, person, editPeople)),
+    ...field("f-notes", "Notes", notes),
+    reviewing ? el("div", { className: "hint full", textContent: "Clues are below: the Deco it's connected through, its DNS "
+      + "lookups and open ports. Still stumped? Pause its internet for 30 minutes and see what stops working." }) : null,
+    el("div", { className: "btns full" }, ...buttons),
+    msg,
+  ), el("datalist", { id: "f-rooms" }));
+  roomList(floor.value);
+}
+
+// ---- the review walk-through (#/review/<mac>)
+function reviewQueue() {
+  // Online devices first: they're the ones you can go and look at, or pause to find.
+  return devices.filter((d) => d.status === "review" && !skipped.has(d.mac))
+    .sort((a, b) => (b.online - a.online) || ipNum(a.ip) - ipNum(b.ip));
+}
+
+function renderProgress() {
+  const left = devices.filter((d) => d.status === "review").length;
+  $("review-progress").textContent = `Reviewing: ${left} device${left === 1 ? "" : "s"} left`
+    + (skipped.size ? `, ${skipped.size} skipped` : "");
+}
+
+function nextReview(after) {
+  const next = reviewQueue().find((d) => d.mac !== after);
+  if (next) { location.hash = "#/review/" + next.mac; return; }
+  location.hash = "#";
+  const left = devices.filter((d) => d.status === "review").length;
+  setFilter(left ? "review" : "all");
+  showError("");
+  $("updated").textContent = left ? `Review done for now: ${left} skipped.` : "All devices reviewed ✓";
+}
+
+$("review-start").onclick = () => { skipped = new Set(); nextReview(null); };
+$("review-stop").onclick = () => { location.hash = "#/device/" + detailMac; };
+
+// ---- people list
+function openPeople() {
+  $("people-list").value = settings.people.join("\n");
+  $("people-status").textContent = "";
+  $("people-dlg").showModal();
+}
+$("people-save").onclick = async () => {
+  try {
+    settings = await post("/api/settings", { people: $("people-list").value.split("\n") });
+    renderSettings();
+    const person = $("f-person");
+    if (person) options(person, settings.people, person.value, "Shared / nobody");
+    $("people-dlg").close();
+  } catch (e) { $("people-status").textContent = "Not saved: " + e.message; }
+};
+$("people-close").onclick = () => $("people-dlg").close();
+$("people-dlg").onclick = (e) => { if (e.target === $("people-dlg")) $("people-dlg").close(); };
 
 function renderPorts(ports, scanned) {
   const note = (text) => el("div", { className: "hint", style: "margin-top:10px", textContent: text });

@@ -14,6 +14,7 @@ netwatch/
   pihole.py    Pi-hole v6 API client for hostnames/vendors
   deco.py      TP-Link Deco client list: names + wired/2.4/5 GHz (optional)
   info.py      merges device details from the Deco and Pi-hole
+  inventory.py what each device is: review status, type, floor, room, person, notes
   tracker.py   scan results -> device state + events (pure logic, unit-tested)
   db.py        SQLite schema
   notify.py    log + ntfy alerts (what to push, quiet hours, grouping)
@@ -56,16 +57,33 @@ the last device list; when the Pi can't be reached it opens with that copy and t
 it was saved. Device details, renaming and pausing need the Pi. Installing needs HTTPS, so use the
 tailnet address, not http://netwatch.lan.
 
+## Device inventory
+
+Every device starts out **to review**. The dashboard's **Review N devices** button steps through
+them one at a time, online ones first. For each, the device page's "About this device" form records:
+
+- **Status:** to review, known (it belongs here) or guest (a visitor's device).
+- **Type:** phone, TV, camera and so on, shown as an icon in the device list.
+- **Floor and room:** Upstairs, Main floor, Basement or Outside, then a room. Rooms already used on
+  that floor are suggested. A device's floor starts out guessed from its Deco, when the Deco is
+  named after a floor.
+- **Person:** who it belongs to, from the people list (**Edit list** next to it), or shared.
+- **Notes.**
+
+The rest of the page has the clues: the Deco it's connected through, its DNS lookups and open
+ports. **Skip** leaves a device for later; the "To review" filter and count show what's left.
+
 ## Pause internet
 
 The device page's **Pause internet** button blocks every DNS lookup from that
 device through Pi-hole, for 30 min / 1 h / 2 h / until 7:00 / until you resume.
 
 The button only appears on devices listed by MAC in `pausable` in the
-`[pihole]` config section, and the server refuses to pause anything else. Since
-anyone on the LAN can use the dashboard, this keeps them from pausing your own
-devices, the Pi or the router. With no list, nothing can be paused. Resume
-always works.
+`[pihole]` config section, and on devices still to review (except the router):
+they aren't known to be yours yet, and pausing one for a while is a way to find
+out what it is. The server refuses to pause anything else. Since anyone on the
+LAN can use the dashboard, this keeps them from pausing your own devices, the Pi
+or the router once you've reviewed them. Resume always works.
 NetWatch creates a Pi-hole group, "NetWatch paused", with a block-everything
 regex rule (`.*`), and points a client entry for the device's IP at it. Resume
 puts back whatever client entry that IP had before. Timed pauses end on their

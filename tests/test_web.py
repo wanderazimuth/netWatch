@@ -104,6 +104,40 @@ class WebTest(unittest.TestCase):
         self.assertEqual(self.post(f"/api/devices/{TV}/down_after", {"minutes": None}), 200)
         self.assertIsNone(device()["down_after"])
 
+    def test_review(self):
+        device = lambda: json.loads(self.get("/api/devices")[1])["devices"][0]
+        self.assertEqual((device()["status"], device()["reviewed"]), ("review", None))
+        form = {"label": "Family room TV", "status": "known", "kind": "tv", "floor": "Basement",
+                "room": " Family room ", "person": "Shaleece", "notes": "On the wall"}
+        self.assertEqual(self.post(f"/api/devices/{TV}/review", form), 200)
+        d = device()
+        self.assertEqual((d["name"], d["status"], d["kind"], d["floor"], d["room"], d["person"], d["notes"]),
+                         ("Family room TV", "known", "tv", "Basement", "Family room", "Shaleece", "On the wall"))
+        self.assertIsNotNone(d["reviewed"])
+        # Only the fields sent change, as an alert's Guest button will send just the status.
+        self.assertEqual(self.post(f"/api/devices/{TV}/review", {"status": "guest"}), 200)
+        self.assertEqual((device()["status"], device()["room"]), ("guest", "Family room"))
+        self.assertEqual(self.post(f"/api/devices/{TV}/review", {"status": "review", "person": None}), 200)
+        self.assertEqual((device()["status"], device()["reviewed"], device()["person"]), ("review", None, None))
+
+    def test_review_rejects_bad_fields(self):
+        for bad in ({"status": "maybe"}, {"kind": "toaster"}, {"floor": "Attic"}, {"person": "Stranger"},
+                    {"room": 5}, {"mac": "x"}):
+            self.assertEqual(self.post(f"/api/devices/{TV}/review", bad), 400, bad)
+        self.assertEqual(self.post("/api/devices/aa:aa:aa:aa:aa:aa/review", {"status": "known"}), 404)
+
+    def test_people(self):
+        s = json.loads(self.get("/api/settings")[1])
+        self.assertEqual(s["people"], ["Roy", "Shanna", "Shaleece", "Spencer", "Fenly"])
+        self.assertIn("Basement", s["floors"])
+        self.assertEqual(self.post(f"/api/devices/{TV}/review", {"person": "Fenly"}), 200)
+        self.assertEqual(self.post("/api/settings", {"people": ["Roy", " Shanna ", ""]}), 200)
+        self.assertEqual(json.loads(self.get("/api/settings")[1])["people"], ["Roy", "Shanna"])
+        # Fenly is off the list now but stays on the TV, and can still be saved there.
+        self.assertEqual(self.post(f"/api/devices/{TV}/review", {"person": "Fenly", "notes": "x"}), 200)
+        for bad in (["Roy", "Roy"], "Roy", [1]):
+            self.assertEqual(self.post("/api/settings", {"people": bad}), 400, bad)
+
     def test_device_detail(self):
         status, body = self.get(f"/api/devices/{TV}?since=0")
         data = json.loads(body)
@@ -151,8 +185,12 @@ class WebTest(unittest.TestCase):
             conn = db.connect(self.db_path)
             apply_scan(conn, [Sighting(TV, "192.168.0.20"), Sighting(OTHER, "192.168.0.30")], 1060, 600)
             conn.close()
-            devices = {d["mac"]: d["pausable"] for d in json.loads(self.get("/api/devices")[1])["devices"]}
-            self.assertEqual(devices, {TV: True, OTHER: False})
+            pausable = lambda: {d["mac"]: d["pausable"] for d in json.loads(self.get("/api/devices")[1])["devices"]}
+            # Still to review, OTHER can be paused too; once it's known, only the config list counts.
+            self.assertEqual(pausable(), {TV: True, OTHER: True})
+            self.assertEqual(self.post(f"/api/devices/{TV}/review", {"status": "known"}), 200)
+            self.assertEqual(self.post(f"/api/devices/{OTHER}/review", {"status": "known"}), 200)
+            self.assertEqual(pausable(), {TV: True, OTHER: False})
             self.assertEqual(self.post(f"/api/devices/{OTHER}/pause", {"until": None}), 403)
             self.assertEqual(self.post(f"/api/devices/{TV}/pause", {"until": None}), 502)
             self.assertEqual(self.post(f"/api/devices/{OTHER}/resume", {}), 200)  # resume is never refused
@@ -171,6 +209,26 @@ class WebTest(unittest.TestCase):
         with self.assertRaises(urllib.error.HTTPError) as cm:
             self.get("/nope")
         self.assertEqual(cm.exception.code, 404)
+
+
+class PausableTest(unittest.TestCase):
+    def test_gateway_from_route_table(self):
+        fd, path = tempfile.mkstemp()
+        with os.fdopen(fd, "w") as f:
+            f.write("Iface Destination Gateway Flags RefCnt Use Metric Mask\n"
+                    "eth0 0000A8C0 00000000 0001 0 0 0 00FFFFFF\n"
+                    "eth0 00000000 0100A8C0 0003 0 0 0 00000000\n")
+        self.addCleanup(os.remove, path)
+        self.assertEqual(web.default_gateway(path), "192.168.0.1")
+        self.assertIsNone(web.default_gateway(path + ".missing"))
+
+    def test_rules(self):
+        row = lambda mac, ip, status: {"mac": mac, "ip": ip, "status": status}
+        listed = frozenset([TV])
+        self.assertTrue(web.can_pause(row(TV, "192.168.0.20", "known"), listed))  # in config
+        self.assertTrue(web.can_pause(row(OTHER, "192.168.0.30", None), listed, "192.168.0.1"))  # to review
+        self.assertFalse(web.can_pause(row(OTHER, "192.168.0.30", "guest"), listed))
+        self.assertFalse(web.can_pause(row(OTHER, "192.168.0.1", None), listed, "192.168.0.1"))  # the router
 
 
 class HistoryTest(unittest.TestCase):

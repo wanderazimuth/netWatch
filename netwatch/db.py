@@ -19,6 +19,13 @@ CREATE TABLE IF NOT EXISTS devices (
     paused_until INTEGER,         -- when the pause ends; NULL = until resumed
     paused_restore TEXT,          -- JSON: the Pi-hole client entry paused_ip had before, to put back
     ports_scanned INTEGER,        -- last port scan of this device; NULL = never scanned
+    status     TEXT,              -- known / guest; NULL = still to review
+    reviewed   INTEGER,           -- when it was last marked known or guest
+    kind       TEXT,              -- phone / tv / camera ... (inventory.KINDS)
+    floor      TEXT,              -- Upstairs / Main floor / Basement / Outside
+    room       TEXT,
+    person     TEXT,              -- whose it is, from the people list; NULL = shared
+    notes      TEXT,
     first_seen INTEGER NOT NULL,  -- unix seconds
     last_seen  INTEGER NOT NULL,
     online     INTEGER NOT NULL DEFAULT 1
@@ -62,6 +69,13 @@ ADDED_COLUMNS = {
     "paused_until": "INTEGER",
     "paused_restore": "TEXT",
     "ports_scanned": "INTEGER",
+    "status": "TEXT",
+    "reviewed": "INTEGER",
+    "kind": "TEXT",
+    "floor": "TEXT",
+    "room": "TEXT",
+    "person": "TEXT",
+    "notes": "TEXT",
 }
 
 
