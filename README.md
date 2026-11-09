@@ -128,9 +128,17 @@ What gets pushed is controlled from the dashboard's **Alerts** button, no SSH ne
 - **New open ports** found by the weekly port scan (below)
 - **Snooze** for 1 / 8 / 24 hours
 - **Quiet hours** -- deliver silently, or don't send at all
+- **Daily review reminder** at a time you pick: the devices seen this week that are
+  still to review (nothing is sent when there are none)
 - **Send test notification**
 
 Several changes in one scan arrive as one notification, not a burst.
+
+A new-device alert has buttons: **Review** opens that device's review page, **Guest** marks it a
+guest, and **Pause 1 h** pauses its internet for an hour from when you tap it (only with Pi-hole
+set up). With several new devices in one alert, **Review devices** starts the walk-through. The
+ntfy app sends Guest and Pause itself, so `dashboard_url` must be an address the phone can reach,
+such as the tailnet name.
 
 ## Is the Pi itself up?
 

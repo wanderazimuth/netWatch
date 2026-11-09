@@ -1,3 +1,4 @@
+import json
 import unittest
 from datetime import datetime
 from unittest import mock
@@ -141,6 +142,73 @@ class SendTest(unittest.TestCase):
             notify.send([ev("new")], self.conn, "https://ntfy.example/t", now=NOON)
 
 
+class ActionsTest(unittest.TestCase):
+    def test_one_new_device(self):
+        buttons = notify.actions([ev("new"), ev("online", PHONE)], "https://dash/", can_pause=True)
+        self.assertEqual([b["label"] for b in buttons], ["Review", "Guest", "Pause 1 h"])
+        self.assertEqual(buttons[0]["url"], f"https://dash/#/review/{TV}")
+        guest, pause = buttons[1:]
+        self.assertEqual((guest["url"], json.loads(guest["body"])), (f"https://dash/api/devices/{TV}/review", {"status": "guest"}))
+        self.assertEqual((pause["url"], json.loads(pause["body"])), (f"https://dash/api/devices/{TV}/pause", {"minutes": 60}))
+        self.assertEqual(guest["headers"], {"Content-Type": "application/json"})  # the API refuses anything else
+
+    def test_no_pause_without_pihole(self):
+        self.assertEqual([b["label"] for b in notify.actions([ev("new")], "https://dash")], ["Review", "Guest"])
+
+    def test_several_new_devices_start_the_walk_through(self):
+        buttons = notify.actions([ev("new"), ev("new", PHONE)], "https://dash", can_pause=True)
+        self.assertEqual([(b["label"], b["url"]) for b in buttons], [("Review devices", "https://dash/#/review")])
+
+    def test_nothing_new_or_no_dashboard(self):
+        self.assertEqual(notify.actions([ev("online")], "https://dash"), [])
+        self.assertEqual(notify.actions([ev("new")], ""), [])
+
+    def test_send_passes_buttons(self):
+        conn = db.connect(":memory:")
+        with mock.patch.object(notify, "push") as push:
+            notify.send([ev("new")], conn, "https://ntfy.example/t", "https://dash", now=NOON, can_pause=True)
+        self.assertEqual(len(push.call_args.args[6]), 3)
+
+
+class DigestTest(unittest.TestCase):
+    def setUp(self):
+        self.conn = db.connect(":memory:")
+        seen = int(NOON.timestamp())
+        for mac, label, last_seen in ((TV, "TV", seen), (PHONE, "Phone", seen), ("00:11:22:33:44:66", "Old", 0)):
+            self.conn.execute("INSERT INTO devices (mac, label, first_seen, last_seen) VALUES (?, ?, 0, ?)",
+                              (mac, label, last_seen))
+        self.conn.execute("UPDATE devices SET status = 'known' WHERE mac = ?", (PHONE,))
+        settings.save(self.conn, {"digest": "08:00"})
+
+    def digest(self, now=NOON):
+        with mock.patch.object(notify, "push") as push:
+            notify.digest(self.conn, "https://ntfy.example/t", "https://dash", now=now)
+        return push
+
+    def test_once_a_day_after_the_time(self):
+        self.assertFalse(self.digest(datetime(2026, 10, 16, 7, 59)).called)
+        push = self.digest()
+        # Only TV: the phone is reviewed and "Old" hasn't been seen this week.
+        self.assertEqual(push.call_args.args[1], "1 device to review")
+        self.assertTrue(push.call_args.args[2].endswith("\nTV"))
+        self.assertEqual(push.call_args.args[6][0]["url"], "https://dash/#/review")
+        self.assertFalse(self.digest(datetime(2026, 10, 16, 18, 0)).called)
+        self.assertTrue(self.digest(datetime(2026, 10, 17, 8, 0)).called)
+
+    def test_off_snoozed_or_nothing_to_review(self):
+        settings.save(self.conn, {"digest": ""})
+        self.assertFalse(self.digest().called)
+        settings.save(self.conn, {"digest": "08:00", "snooze_until": int(NOON.timestamp()) + 60})
+        self.assertFalse(self.digest().called)
+        settings.save(self.conn, {"snooze_until": 0})
+        self.conn.execute("UPDATE devices SET status = 'guest'")
+        self.assertFalse(self.digest().called)
+
+    def test_dashboard_cant_set_sent_date(self):
+        with self.assertRaises(ValueError):
+            settings.validate({"digest_sent": "2026-10-16"})
+
+
 class SettingsTest(unittest.TestCase):
     def setUp(self):
         self.conn = db.connect(":memory:")
@@ -152,7 +220,7 @@ class SettingsTest(unittest.TestCase):
 
     def test_validation(self):
         for bad in ({"enabled": "yes"}, {"quiet_start": "25:00"}, {"quiet_mode": "loud"},
-                    {"snooze_until": -1}, {"snooze_until": True}, {"bogus": 1}):
+                    {"snooze_until": -1}, {"snooze_until": True}, {"bogus": 1}, {"digest": "8am"}):
             with self.assertRaises(ValueError, msg=bad):
                 settings.validate(bad)
 

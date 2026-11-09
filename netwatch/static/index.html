@@ -294,6 +294,14 @@
       <div class="hint" style="margin-top:6px">Uses the Pi's clock. "Silently" still delivers, without sound or vibration.</div>
     </div>
     <div class="group">
+      <h3>Daily review reminder</h3>
+      <div class="btns">
+        <input type="time" id="digest" aria-label="Daily reminder time">
+        <button class="btn" id="digest-clear">Off</button>
+      </div>
+      <div class="hint" style="margin-top:6px">Once a day, a list of devices seen this week that are still to review. Nothing is sent when there are none.</div>
+    </div>
+    <div class="group">
       <div class="btns">
         <button class="btn primary" id="test-btn">Send test notification</button>
         <span class="status" id="test-status"></span>
@@ -374,7 +382,7 @@ const STATUS_TEXT = { review: "To review", known: "Known", guest: "Guest" };
 let devices = [], serverNow = 0, filter = "all", sortKey = "ip", sortAsc = true, editing = null, settings = null;
 let detailMac = null, detail = null;
 // The review walk-through: the devices to step through, and the ones skipped this time.
-let reviewing = false, skipped = new Set();
+let reviewing = false, skipped = new Set(), reviewWhenLoaded = false;
 
 async function post(url, body) {
   const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
@@ -586,6 +594,7 @@ async function refresh() {
     renderDevices();
     renderEvents(e.events);
     if (reviewing) renderProgress();
+    if (reviewWhenLoaded) { reviewWhenLoaded = false; startReview(); }
     if (detailMac) loadDetail();
     $("updated").textContent = saved
       ? "Offline: showing the list saved " + new Date(saved).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })
@@ -623,6 +632,7 @@ function renderSettings() {
   $("quiet-start").value = settings.quiet_start;
   $("quiet-end").value = settings.quiet_end;
   $("quiet-mode").value = settings.quiet_mode;
+  $("digest").value = settings.digest;
   $("ntfy-missing").hidden = settings.ntfy_configured;
   $("test-btn").disabled = !settings.ntfy_configured;
   renderPill();
@@ -665,6 +675,8 @@ $("quiet-start").onchange = saveQuiet;
 $("quiet-end").onchange = saveQuiet;
 $("quiet-mode").onchange = saveQuiet;
 $("quiet-clear").onclick = () => saveSettings({ quiet_start: "", quiet_end: "" });
+$("digest").onchange = () => saveSettings({ digest: $("digest").value });
+$("digest-clear").onclick = () => saveSettings({ digest: "" });
 $("test-btn").onclick = async () => {
   $("test-status").textContent = "Sending…";
   try { await post("/api/test-notification", {}); $("test-status").textContent = "Sent. Check your phone."; }
@@ -756,6 +768,11 @@ function weekStart() {
 }
 
 function route() {
+  // #/review, from an alert's Review button, starts the walk-through once the list has loaded.
+  if (location.hash === "#/review") {
+    if (devices.length) return startReview();
+    reviewWhenLoaded = true;
+  }
   // #/device/<mac>, or #/review/<mac> for the same page as a step of the review walk-through.
   const m = location.hash.match(/^#\/(device|review)\/([0-9a-f]{2}(?::[0-9a-f]{2}){5})$/);
   detailMac = m ? m[2] : null;
@@ -940,7 +957,8 @@ function nextReview(after) {
   $("updated").textContent = left ? `Review done for now: ${left} skipped.` : "All devices reviewed ✓";
 }
 
-$("review-start").onclick = () => { skipped = new Set(); nextReview(null); };
+function startReview() { skipped = new Set(); nextReview(null); }
+$("review-start").onclick = startReview;
 $("review-stop").onclick = () => { location.hash = "#/device/" + detailMac; };
 
 // ---- people list

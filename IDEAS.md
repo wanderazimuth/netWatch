@@ -12,8 +12,8 @@ people build with similar tools (NetAlertX / Pi.Alert, WatchYourLAN, Fing).
 5. **New-device triage** (planned 2026-11-08, in three steps):
    1. ~~Inventory: review status (to review / known / guest), type, floor, room, person, notes,
       and a review walk-through.~~ Done.
-   2. Alert buttons on a new-device ntfy alert: Review, Guest, Pause 1 h. Optionally a morning
-      digest of devices still to review.
+   2. ~~Alert buttons on a new-device ntfy alert: Review, Guest, Pause 1 h. Optionally a morning
+      digest of devices still to review.~~ Done.
    3. "Same device as…": move a device's name and notes to the new MAC a phone rotated to.
 
 ## More ideas

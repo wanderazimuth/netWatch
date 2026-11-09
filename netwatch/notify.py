@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import sqlite3
 import urllib.request
 from datetime import datetime, time as dtime
 
+from . import db
 from . import settings as settings_mod
 from .scanner import is_randomized_mac
 from .tracker import Event
@@ -27,6 +29,7 @@ TITLES = {"new": "New device on the network", "online": "Device arrived", "offli
 TAGS = {"new": "warning", "online": "house", "offline": "wave", "down": "rotating_light", "up": "white_check_mark",
         "port": "unlock"}
 MAX_LINES = 10
+DIGEST_DAYS = 7  # the digest lists devices still to review that were seen this recently
 
 
 def format_duration(seconds: int) -> str:
@@ -96,7 +99,32 @@ def build_message(events: list[Event]) -> tuple[str, str, str]:
     return f"{len(events)} network changes", "\n".join(lines), tags
 
 
-def push(ntfy_url: str, title: str, body: str, priority: str = "default", tags: str = "", click: str = "") -> None:
+def actions(events: list[Event], dashboard_url: str, can_pause: bool = False) -> list[dict]:
+    """ntfy buttons for an alert with new devices: review one, call it a guest, or pause it for an hour.
+
+    The phone's ntfy app makes the Guest and Pause requests itself, so they need dashboard_url to be
+    an address the phone can reach (the tailnet name).
+    """
+    new = [e for e in events if e.kind == "new"]
+    if not dashboard_url or not new:
+        return []
+    base = dashboard_url.rstrip("/")
+    if len(new) > 1:
+        return [{"action": "view", "label": "Review devices", "url": base + "/#/review", "clear": True}]
+    mac = new[0].mac
+    post = {"action": "http", "method": "POST", "headers": {"Content-Type": "application/json"}, "clear": True}
+    buttons = [
+        {"action": "view", "label": "Review", "url": f"{base}/#/review/{mac}", "clear": True},
+        {**post, "label": "Guest", "url": f"{base}/api/devices/{mac}/review", "body": json.dumps({"status": "guest"})},
+    ]
+    if can_pause:
+        buttons.append({**post, "label": "Pause 1 h", "url": f"{base}/api/devices/{mac}/pause",
+                        "body": json.dumps({"minutes": 60})})
+    return buttons
+
+
+def push(ntfy_url: str, title: str, body: str, priority: str = "default", tags: str = "", click: str = "",
+         buttons: list[dict] | None = None) -> None:
     req = urllib.request.Request(ntfy_url, data=body.encode(), method="POST")
     # Header values must be latin-1; device names can contain anything.
     req.add_header("Title", title.encode("latin-1", "replace").decode("latin-1"))
@@ -105,6 +133,9 @@ def push(ntfy_url: str, title: str, body: str, priority: str = "default", tags: 
         req.add_header("Tags", tags)
     if click:
         req.add_header("Click", click)
+    if buttons:
+        # ntfy takes the JSON form of actions in the header too; json.dumps keeps it ASCII.
+        req.add_header("Actions", json.dumps(buttons))
     urllib.request.urlopen(req, timeout=10).close()
 
 
@@ -119,7 +150,7 @@ def heartbeat(url: str) -> bool:
 
 
 def send(events: list[Event], conn: sqlite3.Connection, ntfy_url: str = "", click: str = "",
-         now: datetime | None = None) -> None:
+         now: datetime | None = None, can_pause: bool = False) -> None:
     for e in events:
         log.info(format_event(e))
     if not ntfy_url or not events:
@@ -130,6 +161,38 @@ def send(events: list[Event], conn: sqlite3.Connection, ntfy_url: str = "", clic
         return
     title, body, tags = build_message(chosen)
     try:
-        push(ntfy_url, title, body, priority, tags, click)
+        push(ntfy_url, title, body, priority, tags, click, actions(chosen, click, can_pause))
     except Exception:
         log.exception("ntfy notification failed")
+
+
+def digest(conn: sqlite3.Connection, ntfy_url: str = "", dashboard_url: str = "", now: datetime | None = None) -> None:
+    """Once a day at the digest time, push a list of recently seen devices that are still to review."""
+    now = now or datetime.now()
+    s = settings_mod.load(conn)
+    if not ntfy_url or not s["digest"] or not s["enabled"] or now.timestamp() < s["snooze_until"]:
+        return
+    today = now.date().isoformat()
+    # Kept beside the settings but not one of them, so the dashboard can't change it.
+    sent = conn.execute("SELECT value FROM settings WHERE key = 'digest_sent'").fetchone()
+    if now.time() < dtime.fromisoformat(s["digest"]) or (sent and json.loads(sent["value"]) == today):
+        return
+    rows = conn.execute("SELECT * FROM devices WHERE status IS NULL AND last_seen >= ? ORDER BY last_seen DESC",
+                        (int(now.timestamp()) - DIGEST_DAYS * 86400,)).fetchall()
+    # Marked before pushing, so a failing push doesn't retry every scan.
+    conn.execute("INSERT INTO settings (key, value) VALUES ('digest_sent', ?)"
+                 " ON CONFLICT(key) DO UPDATE SET value = excluded.value", (json.dumps(today),))
+    conn.commit()
+    if not rows:
+        return
+    lines = [db.display_name(r) for r in rows[:MAX_LINES]]
+    if len(rows) > MAX_LINES:
+        lines.append(f"...and {len(rows) - MAX_LINES} more")
+    title = f"{len(rows)} device{'s' if len(rows) > 1 else ''} to review"
+    buttons = ([{"action": "view", "label": "Review", "url": dashboard_url.rstrip("/") + "/#/review", "clear": True}]
+               if dashboard_url else None)
+    try:
+        push(ntfy_url, title, "Seen this week, not reviewed yet:\n" + "\n".join(lines), "low", "mag",
+             dashboard_url, buttons)
+    except Exception:
+        log.exception("ntfy digest failed")

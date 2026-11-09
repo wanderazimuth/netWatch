@@ -67,7 +67,9 @@ def cmd_run(cfg, conn, args) -> None:
     while True:
         started = time.monotonic()
         try:
-            notify.send(scan_once(cfg, conn, deco), conn, cfg.ntfy_url, cfg.dashboard_url)
+            notify.send(scan_once(cfg, conn, deco), conn, cfg.ntfy_url, cfg.dashboard_url,
+                        can_pause=cfg.pihole is not None)
+            notify.digest(conn, cfg.ntfy_url, cfg.dashboard_url)
         except Exception:
             log.exception("scan failed")
         else:

@@ -193,6 +193,10 @@ class WebTest(unittest.TestCase):
             self.assertEqual(pausable(), {TV: True, OTHER: False})
             self.assertEqual(self.post(f"/api/devices/{OTHER}/pause", {"until": None}), 403)
             self.assertEqual(self.post(f"/api/devices/{TV}/pause", {"until": None}), 502)
+            # An alert's Pause 1 h button sends minutes.
+            self.assertEqual(self.post(f"/api/devices/{TV}/pause", {"minutes": 60}), 502)
+            for bad in (0, True, "60", 7 * 24 * 60 + 1):
+                self.assertEqual(self.post(f"/api/devices/{TV}/pause", {"minutes": bad}), 400, bad)
             self.assertEqual(self.post(f"/api/devices/{OTHER}/resume", {}), 200)  # resume is never refused
         finally:
             self.base = base

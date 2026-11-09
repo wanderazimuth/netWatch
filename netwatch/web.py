@@ -293,6 +293,12 @@ def make_handler(db_path: str, ntfy_url: str = "", dashboard_url: str = "",
             if action == "pause" and row is not None and not can_pause(row, pausable, gateway):
                 return self._json({"error": "only devices still to review, or in the pausable list in config.toml, can be paused"}, 403)
             until, now = body.get("until"), int(time.time())
+            # An alert's Pause button sends minutes, so it counts from the tap, not from when the alert went out.
+            minutes = body.get("minutes")
+            if action == "pause" and minutes is not None:
+                if not (isinstance(minutes, int) and not isinstance(minutes, bool) and 0 < minutes <= MAX_PAUSE // 60):
+                    return self._json({"error": "minutes must be 1 to 7 days' worth"}, 400)
+                until = now + minutes * 60
             if action == "pause" and until is not None and not (
                 isinstance(until, int) and not isinstance(until, bool) and now < until <= now + MAX_PAUSE
             ):

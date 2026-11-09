@@ -17,6 +17,7 @@ DEFAULTS = {
     "quiet_end": "",
     "quiet_mode": "silent",  # during quiet hours: "silent" (no sound) or "skip" (don't send)
     "snooze_until": 0,  # unix seconds; no alerts before this
+    "digest": "",  # "HH:MM": a daily alert listing devices still to review; empty = off
     "people": ["Roy", "Shanna", "Shaleece", "Spencer", "Fenly"],  # who a device can belong to
 }
 MAX_PEOPLE, MAX_PERSON = 30, 32
@@ -42,7 +43,7 @@ def validate(updates: dict) -> dict:
         if isinstance(default, bool):
             if not isinstance(value, bool):
                 raise ValueError(f"{key} must be true or false")
-        elif key in ("quiet_start", "quiet_end"):
+        elif key in ("quiet_start", "quiet_end", "digest"):
             if value != "" and not (isinstance(value, str) and TIME.fullmatch(value)):
                 raise ValueError(f"{key} must be HH:MM or empty")
         elif key == "quiet_mode":
