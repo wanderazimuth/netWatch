@@ -52,6 +52,23 @@ CREATE TABLE IF NOT EXISTS ports (
     PRIMARY KEY (mac, port, proto)
 );
 
+-- Hourly internet speed tests (speed.py).
+CREATE TABLE IF NOT EXISTS speedtests (
+    id     INTEGER PRIMARY KEY,
+    ts     INTEGER NOT NULL,
+    kind   TEXT NOT NULL,         -- full | ping (only a ping check: the internet was busy)
+    down   REAL,                  -- Mbps
+    up     REAL,
+    ping   REAL,                  -- ms
+    jitter REAL,
+    loss   REAL,                  -- percent of packets lost
+    server TEXT,
+    url    TEXT,                  -- Ookla's page for the result
+    busy   TEXT,                  -- who kept the internet busy
+    error  TEXT
+);
+CREATE INDEX IF NOT EXISTS speedtests_ts ON speedtests(ts);
+
 CREATE TABLE IF NOT EXISTS settings (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL           -- JSON

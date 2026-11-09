@@ -28,7 +28,7 @@
   h2 { font-size: 14px; margin: 0 0 10px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
   .updated { color: var(--muted); font-size: 12px; }
   .updated.offline { color: var(--new); font-weight: 600; }
-  .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin: 16px 0; }
+  .stats { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; margin: 16px 0; }
   .stat { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; }
   .stat .v { font-size: 26px; font-weight: 650; font-variant-numeric: tabular-nums; }
   .stat .k { color: var(--muted); font-size: 12px; }
@@ -152,6 +152,23 @@
                 border-color: var(--accent); }
   .review-bar strong { margin-right: auto; }
   .review-bar[hidden] { display: none; }
+  .stat .v small { font-size: 13px; font-weight: 500; color: var(--muted); }
+  .speed-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
+  .speed-head h2 { margin: 0 auto 0 0; }
+  .speed-latest { display: flex; gap: 22px; flex-wrap: wrap; margin: 6px 0 12px; }
+  .speed-latest .v { font-size: 24px; font-weight: 650; font-variant-numeric: tabular-nums; }
+  .chart { position: relative; touch-action: pan-y; }
+  .chart svg { display: block; width: 100%; overflow: visible; }
+  .chart text { fill: var(--muted); font-size: 11px; }
+  .chart .grid { stroke: var(--border); }
+  .readout { min-height: 1.4em; font-size: 12.5px; margin: 4px 0 10px; }
+  .legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12px; color: var(--muted); }
+  .legend i { display: inline-block; width: 12px; height: 3px; vertical-align: middle; margin-right: 5px; border-radius: 2px; }
+  .speed-form { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 8px 12px; align-items: center; }
+  .speed-form input[type=number] { font: inherit; width: 90px; padding: 5px 8px; border: 1px solid var(--border);
+                                   border-radius: 7px; background: var(--bg); color: var(--text); }
+  .speed-table td, .speed-table th { white-space: nowrap; }
+  .speed-table td.note { white-space: normal; color: var(--muted); }
   .picks { display: flex; flex-direction: column; gap: 4px; max-height: 50vh; overflow-y: auto; margin-top: 8px; }
   .pick { text-align: left; font: inherit; color: inherit; background: var(--bg); border: 1px solid var(--border);
           border-radius: 8px; padding: 6px 10px; cursor: pointer; }
@@ -165,6 +182,7 @@
     .detail-grid { grid-template-columns: minmax(0, 1fr); }
     .layout { grid-template-columns: minmax(0, 1fr); }
     .stats { grid-template-columns: repeat(2, 1fr); }
+    #s-speed-box { grid-column: 1 / -1; }
     .hide-sm { display: none; }
   }
 </style>
@@ -186,6 +204,7 @@
     <div class="stat clickable" id="s-review-box" title="Show the devices still to review"><div class="v" id="s-review">–</div><div class="k" id="s-review-k">To review</div></div>
     <div class="stat"><div class="v" id="s-new">–</div><div class="k">New in last 24h</div></div>
     <div class="stat"><div class="v" id="s-events">–</div><div class="k">Events in last 24h</div></div>
+    <div class="stat clickable" id="s-speed-box" title="Internet speed over time"><div class="v" id="s-speed">–</div><div class="k" id="s-speed-k">Internet speed</div></div>
   </section>
 
   <div class="layout">
@@ -224,6 +243,57 @@
       <ul class="events" id="events"></ul>
     </section>
   </div>
+  </div>
+
+  <div id="speed-view" hidden>
+    <a href="#" class="back">← All devices</a>
+    <section class="panel">
+      <div class="speed-head">
+        <h2>Internet speed</h2>
+        <div class="seg" id="speed-range">
+          <button data-days="1">24 h</button>
+          <button data-days="7" class="active">7 days</button>
+          <button data-days="30">30 days</button>
+        </div>
+        <button class="btn primary" id="speed-run">Run test now</button>
+      </div>
+      <div class="speed-latest" id="speed-latest"></div>
+      <div class="chart" id="speed-chart"></div>
+      <div class="chart" id="ping-chart"></div>
+      <div class="readout" id="speed-readout"></div>
+      <div class="legend">
+        <span><i style="background:var(--accent)"></i>Download</span>
+        <span><i style="background:var(--on)"></i>Upload</span>
+        <span><i style="background:var(--new)"></i>Ping</span>
+        <span><i style="background:var(--off)"></i>Skipped: someone was using the internet</span>
+        <span><i style="background:var(--down)"></i>Test failed</span>
+      </div>
+    </section>
+    <div class="layout" style="margin-top:16px">
+      <section class="panel">
+        <h2>Recent tests</h2>
+        <div class="table-wrap"><table class="speed-table">
+          <thead><tr><th>When</th><th>Down</th><th>Up</th><th>Ping</th><th class="hide-sm">Jitter</th><th>Notes</th></tr></thead>
+          <tbody id="speed-rows"></tbody>
+        </table></div>
+      </section>
+      <section class="panel">
+        <h2>Settings</h2>
+        <div class="speed-form">
+          <label for="sp-on">Hourly tests</label>
+          <label class="pair"><input type="checkbox" id="sp-on"> <span class="hint">once an hour, from the Pi</span></label>
+          <label for="sp-busy">Busy above</label>
+          <div><input type="number" id="sp-busy" min="0.1" max="10000" step="0.5"> Mbps</div>
+          <label for="sp-plan">Plan speed</label>
+          <div><input type="number" id="sp-plan" min="0" max="10000" step="10"> Mbps</div>
+        </div>
+        <div class="hint" style="margin-top:10px">Before each test the Deco is asked how much every device is using.
+          If a phone, computer, TV, tablet or console is moving more than the busy speed (a stream or a video
+          call), only a quick ping check runs, and the full test is tried again every 10 minutes until the hour
+          is up. Cameras and smart-home gear don't count. "Run test now" doesn't wait.</div>
+        <div class="status" id="sp-status"></div>
+      </section>
+    </div>
   </div>
 
   <div id="detail-view" hidden>
@@ -622,6 +692,7 @@ async function refresh() {
     renderEvents(e.events);
     if (reviewing) renderProgress();
     if (reviewWhenLoaded) { reviewWhenLoaded = false; startReview(); }
+    loadSpeed();
     if (detailMac) loadDetail();
     $("updated").textContent = saved
       ? "Offline: showing the list saved " + new Date(saved).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })
@@ -806,8 +877,15 @@ function route() {
   reviewing = !!m && m[1] === "review";
   detail = null;
   formMac = null;
-  $("list-view").hidden = !!detailMac;
+  const speedPage = location.hash === "#/speed";
+  $("list-view").hidden = !!detailMac || speedPage;
   $("detail-view").hidden = !detailMac;
+  $("speed-view").hidden = !speedPage;
+  if (speedPage) {
+    document.title = "Internet speed · NetWatch";
+    window.scrollTo(0, 0);
+    return loadSpeed();
+  }
   $("review-bar").hidden = !reviewing;
   if (reviewing) renderProgress();
   if (!detailMac) {
@@ -1161,6 +1239,204 @@ function renderDns(x) {
     el("div", { style: "margin-top:8px" }, reload),
   );
 }
+
+// ---- internet speed (#/speed)
+let speedDays = 7, speed = null, speedWait = null;
+const mbps = (v) => v == null ? "–" : v >= 100 ? String(Math.round(v)) : v.toFixed(1);
+const ms = (v) => v == null ? "–" : Math.round(v) + " ms";
+
+async function loadSpeed() {
+  const onPage = location.hash === "#/speed";
+  try {
+    const r = await fetch(`/api/speed?days=${onPage ? speedDays : 1}`);
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || "HTTP " + r.status);
+    speed = data;
+    renderSpeedStat();
+    if (location.hash === "#/speed") renderSpeed();
+  } catch (e) { if (onPage) showError("Couldn't load speed tests: " + e.message); }
+}
+
+const fullTests = () => speed.tests.filter((t) => t.kind === "full" && !t.error);
+
+function renderSpeedStat() {
+  const last = fullTests().at(-1);
+  $("s-speed").replaceChildren(last ? `${mbps(last.down)} / ${mbps(last.up)} ` : "–", last ? el("small", { textContent: "Mbps" }) : "");
+  $("s-speed-k").textContent = last ? `Down / up · ${ago(last.ts)}` : "Internet speed";
+}
+
+function svgEl(tag, attrs = {}, ...children) {
+  const n = document.createElementNS("http://www.w3.org/2000/svg", tag);
+  for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v);
+  for (const c of children) if (c != null) n.append(c);
+  return n;
+}
+
+function niceMax(v) {
+  const step = 10 ** Math.floor(Math.log10(v || 1));
+  return Math.ceil(v / step * 1.1) * step;
+}
+
+// One chart: lines of points over time, broken where tests are more than 3 hours apart.
+function chart(box, { height, start, end, max, unit, series, plan, marks = [] }) {
+  const W = Math.max(box.clientWidth, 280), L = 38, R = 8, T = 22, B = 20, H = height;
+  const x = (t) => L + (t - start) / (end - start) * (W - L - R);
+  const y = (v) => T + (1 - Math.min(v, max) / max) * (H - T - B);
+  const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, height: H });
+  for (let i = 0; i <= 4; i++) {
+    const v = max / 4 * i;
+    svg.append(svgEl("line", { class: "grid", x1: L, x2: W - R, y1: y(v), y2: y(v) }),
+      svgEl("text", { x: L - 5, y: y(v) + 4, "text-anchor": "end" }, String(Math.round(v))));
+  }
+  svg.append(svgEl("text", { x: L - 5, y: 10, "text-anchor": "end" }, unit));
+  // Ticks every 6 hours for a day, otherwise at midnight every day (or every 5 days for a month).
+  const days = (end - start) / DAY, tick = new Date(start * 1000);
+  tick.setMinutes(0, 0, 0);
+  if (days <= 1) tick.setHours(Math.ceil(tick.getHours() / 6) * 6); else tick.setHours(24);
+  const step = () => days <= 1 ? tick.setHours(tick.getHours() + 6) : tick.setDate(tick.getDate() + (days <= 7 ? 1 : 5));
+  for (; tick / 1000 <= end; step()) {
+    const t = tick / 1000;
+    svg.append(svgEl("line", { class: "grid", x1: x(t), x2: x(t), y1: T, y2: H - B, "stroke-dasharray": "2 3" }),
+      svgEl("text", { x: x(t), y: H - 5, "text-anchor": "middle" }, days <= 1
+        ? tick.toLocaleTimeString([], { hour: "numeric" }) : tick.toLocaleDateString([], { month: "short", day: "numeric" })));
+  }
+  if (plan) {
+    svg.append(svgEl("line", { x1: L, x2: W - R, y1: y(plan), y2: y(plan), stroke: "var(--accent)", "stroke-dasharray": "6 4", opacity: 0.5 }),
+      svgEl("text", { x: W - R, y: y(plan) - 4, "text-anchor": "end" }, `plan ${plan}`));
+  }
+  for (const s of series) {
+    let d = "", prev = null;
+    for (const t of s.points) {
+      d += (prev && t.ts - prev.ts <= 3 * 3600 ? "L" : "M") + x(t.ts).toFixed(1) + " " + y(s.value(t)).toFixed(1);
+      prev = t;
+    }
+    if (d) svg.append(svgEl("path", { d, fill: "none", stroke: s.color, "stroke-width": 2, "stroke-linejoin": "round" }));
+    if (s.points.length <= 200) {  // dots only while there's room for them
+      for (const t of s.points) {
+        const hollow = s.hollow && s.hollow(t);
+        svg.append(svgEl("circle", { cx: x(t.ts), cy: y(s.value(t)), r: hollow ? 3 : 2.5,
+          fill: hollow ? "var(--panel)" : s.color, stroke: s.color, "stroke-width": 1.5 }));
+      }
+    }
+  }
+  for (const m of marks) svg.append(svgEl("rect", { x: x(m.ts) - 1.5, y: H - B - 6, width: 3, height: 6, fill: m.color }));
+  const cursor = svgEl("line", { x1: 0, x2: 0, y1: T, y2: H - B, stroke: "var(--muted)", visibility: "hidden" });
+  svg.append(cursor);
+  box.replaceChildren(svg);
+  return { x, cursor, toTime: (px) => start + (px - L) / (W - L - R) * (end - start) };
+}
+
+function describe(t) {
+  const when = new Date(t.ts * 1000).toLocaleString([], { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+  if (t.error) return `${when}: test failed (${t.error})`;
+  if (t.kind === "ping") return `${when}: skipped, busy (${t.busy}). Ping ${ms(t.ping)}, jitter ${ms(t.jitter)}, ${t.loss ?? "–"}% lost`;
+  return `${when}: ${mbps(t.down)} down, ${mbps(t.up)} up Mbps · ping ${ms(t.ping)}, jitter ${ms(t.jitter)}`
+    + (t.loss ? `, ${t.loss}% lost` : "") + (t.server ? ` · ${t.server}` : "");
+}
+
+function renderSpeed() {
+  const end = speed.now, start = end - speedDays * DAY;
+  const tests = speed.tests, full = fullTests(), plan = settings ? settings.speed_plan_mbps : 0;
+  const last = full.at(-1);
+  const stat = (v, k) => el("div", {}, el("div", { className: "v", textContent: v }), el("div", { className: "sub", textContent: k }));
+  $("speed-latest").replaceChildren(...(last ? [
+    stat(mbps(last.down) + " Mbps", "Download"), stat(mbps(last.up) + " Mbps", "Upload"), stat(ms(last.ping), "Ping"),
+    el("div", { className: "sub", style: "align-self:end", textContent: "Latest full test, " + ago(last.ts) }),
+  ] : [el("div", { className: "sub", textContent: "No full test yet. One runs every hour, or now if you ask." })]));
+  // Hours that never got their full test, and failed tests, as marks along the bottom.
+  const fullHours = new Set(full.map((t) => Math.floor(t.ts / 3600)));
+  const marks = tests.filter((t) => t.error || (t.kind === "ping" && !fullHours.has(Math.floor(t.ts / 3600))))
+    .map((t) => ({ ts: t.ts, color: t.error ? "var(--down)" : "var(--off)" }));
+  const top = niceMax(Math.max(plan, 10, ...full.map((t) => Math.max(t.down, t.up))));
+  const pings = tests.filter((t) => t.ping != null);
+  const charts = [
+    chart($("speed-chart"), { height: 220, start, end, max: top, unit: "Mbps", plan, marks, series: [
+      { points: full, value: (t) => t.down, color: "var(--accent)" },
+      { points: full, value: (t) => t.up, color: "var(--on)" },
+    ] }),
+    chart($("ping-chart"), { height: 110, start, end, max: niceMax(Math.max(50, ...pings.map((t) => t.ping))), unit: "ms", series: [
+      { points: pings, value: (t) => t.ping, color: "var(--new)", hollow: (t) => t.kind === "ping" },
+    ] }),
+  ];
+  // Point at or tap a chart for the nearest test.
+  for (const c of charts) {
+    const svg = c.cursor.ownerSVGElement;
+    const show = (e) => {
+      if (!tests.length) return;
+      const r = svg.getBoundingClientRect();
+      const t0 = c.toTime((e.clientX - r.left) * (svg.viewBox.baseVal.width / r.width));
+      const near = tests.reduce((a, b) => Math.abs(b.ts - t0) < Math.abs(a.ts - t0) ? b : a);
+      for (const k of charts) {
+        k.cursor.setAttribute("x1", k.x(near.ts));
+        k.cursor.setAttribute("x2", k.x(near.ts));
+        k.cursor.setAttribute("visibility", "visible");
+      }
+      $("speed-readout").textContent = describe(near);
+    };
+    svg.onpointermove = show;
+    svg.onclick = show;
+  }
+  if (!$("speed-readout").textContent) $("speed-readout").textContent = tests.length ? "Point at or tap the chart for details." : "";
+
+  $("speed-rows").replaceChildren(...tests.slice(-48).reverse().map((t) => el("tr", {},
+    el("td", { textContent: new Date(t.ts * 1000).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" }) }),
+    el("td", { textContent: t.kind === "full" ? mbps(t.down) : "–" }),
+    el("td", { textContent: t.kind === "full" ? mbps(t.up) : "–" }),
+    el("td", { textContent: ms(t.ping) }),
+    el("td", { className: "hide-sm", textContent: ms(t.jitter) }),
+    el("td", { className: "note" }, t.error ? "Failed: " + t.error : t.kind === "ping" ? "Skipped, busy: " + t.busy
+      : t.url ? el("a", { href: t.url, target: "_blank", rel: "noopener", textContent: t.server || "Ookla result" }) : t.server || ""),
+  )));
+  if (!tests.length) $("speed-rows").append(el("tr", {}, el("td", { colSpan: 6, className: "empty", textContent: "No tests yet." })));
+
+  $("speed-range").querySelectorAll("button").forEach((b) => b.classList.toggle("active", Number(b.dataset.days) === speedDays));
+  // The request file is gone as soon as the test starts, so keep waiting until its result is in.
+  const testing = speed.pending || speedWait !== null;
+  $("speed-run").disabled = testing;
+  $("speed-run").textContent = testing ? "Testing… (about a minute)" : "Run test now";
+  if (settings && !document.activeElement?.closest(".speed-form")) {
+    $("sp-on").checked = settings.speed_tests;
+    $("sp-busy").value = settings.speed_busy_mbps;
+    $("sp-plan").value = settings.speed_plan_mbps || "";
+  }
+}
+
+$("s-speed-box").onclick = () => { location.hash = "#/speed"; };
+$("speed-range").querySelectorAll("button").forEach((b) => b.onclick = () => {
+  speedDays = Number(b.dataset.days);
+  $("speed-readout").textContent = "";
+  loadSpeed();
+});
+$("speed-run").onclick = async () => {
+  try {
+    await post("/api/speed/run", {});
+    const before = speed.tests.length ? speed.tests.at(-1).id : 0;
+    // The test takes about a minute: look for its result every 5 seconds, for up to 3 minutes.
+    clearInterval(speedWait);
+    let tries = 0;
+    speedWait = setInterval(async () => {
+      await loadSpeed();
+      const latest = speed.tests.at(-1);
+      if ((latest && latest.id !== before && !speed.pending) || ++tries > 36) {
+        clearInterval(speedWait);
+        speedWait = null;
+        renderSpeed();
+      }
+    }, 5000);
+    renderSpeed();
+  } catch (e) { $("sp-status").textContent = "Couldn't start a test: " + e.message; }
+};
+async function saveSpeedSetting(updates) {
+  try {
+    settings = await post("/api/settings", updates);
+    $("sp-status").textContent = "Saved ✓";
+    renderSpeed();
+  } catch (e) { $("sp-status").textContent = "Not saved: " + e.message; }
+}
+$("sp-on").onchange = () => saveSpeedSetting({ speed_tests: $("sp-on").checked });
+$("sp-busy").onchange = () => saveSpeedSetting({ speed_busy_mbps: Number($("sp-busy").value) });
+$("sp-plan").onchange = () => saveSpeedSetting({ speed_plan_mbps: Number($("sp-plan").value) || 0 });
+window.addEventListener("resize", () => { if (location.hash === "#/speed" && speed) renderSpeed(); });
 
 window.onhashchange = route;
 route();

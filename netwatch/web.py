@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import socket
 import struct
@@ -21,6 +22,7 @@ from urllib.parse import parse_qs, urlparse
 from . import db, inventory, notify
 from . import pause as pause_mod
 from . import settings as settings_mod
+from . import speed as speed_mod
 from .pihole import PiholeClient
 from .scanner import is_randomized_mac
 
@@ -219,6 +221,8 @@ def make_handler(db_path: str, ntfy_url: str = "", dashboard_url: str = "",
                     return self._json({"events": events_json(conn, min(max(limit, 1), 1000))})
                 finally:
                     conn.close()
+            if url.path == "/api/speed":
+                return self._speed(parse_qs(url.query))
             m = DEVICE_INFO_PATH.fullmatch(url.path)
             if m:
                 return self._device(m.group(1), parse_qs(url.query)) if not m.group(2) else self._dns(m.group(1))
@@ -265,6 +269,20 @@ def make_handler(db_path: str, ntfy_url: str = "", dashboard_url: str = "",
                 log.warning("Pi-hole query lookup failed", exc_info=True)
                 return self._json({"error": f"Pi-hole lookup failed: {e}"}, 502)
             return self._json({"ip": row["ip"], **dns_summary(result)})
+
+        def _speed(self, query: dict):
+            try:
+                days = min(max(int(query.get("days", ["7"])[0]), 1), 90)
+            except ValueError:
+                return self._json({"error": "days must be a number"}, 400)
+            now = int(time.time())
+            conn = db.connect(db_path)
+            try:
+                tests = speed_mod.results(conn, now - days * 86400)
+            finally:
+                conn.close()
+            pending = os.path.exists(os.path.join(os.path.dirname(db_path), speed_mod.REQUEST_FILE))
+            return self._json({"now": now, "tests": tests, "pending": pending})
 
         def _settings(self, conn) -> dict:
             return {**settings_mod.load(conn), "ntfy_configured": bool(ntfy_url), "pihole_configured": pihole is not None,
@@ -355,6 +373,13 @@ def make_handler(db_path: str, ntfy_url: str = "", dashboard_url: str = "",
                                 click=dashboard_url)
                 except Exception as e:
                     return self._json({"error": f"ntfy push failed: {e}"}, 502)
+                return self._json({"ok": True})
+
+            if path == "/api/speed/run":
+                # The test runs in its own service (netwatch-speedtest), which a path unit
+                # starts when this file appears; the dashboard polls for the result.
+                with open(os.path.join(os.path.dirname(db_path), speed_mod.REQUEST_FILE), "w"):
+                    pass
                 return self._json({"ok": True})
 
             conn = db.connect(db_path)

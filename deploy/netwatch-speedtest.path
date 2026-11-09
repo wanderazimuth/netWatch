@@ -1,0 +1,10 @@
+[Unit]
+Description=Run a NetWatch speed test when the dashboard asks for one
+
+[Path]
+# The dashboard's "Run test now" creates this file; the test removes it.
+PathExists=/var/lib/netwatch/speedtest.request
+Unit=netwatch-speedtest.service
+
+[Install]
+WantedBy=paths.target

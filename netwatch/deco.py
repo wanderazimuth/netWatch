@@ -166,3 +166,41 @@ class Deco:
             for c in self.clients.values()
             if c.ip and ipaddress.ip_address(c.ip) in net
         ]
+
+
+def traffic(url: str, password_file: str, samples: int = 4, gap: float = 5, sleep=time.sleep) -> dict[str, tuple[int, int]]:
+    """Each client's peak (down, up) speed in kbit/s, over a few samples a few seconds apart.
+
+    Streaming comes in bursts, so one reading can land between them. The Deco reports kbit/s
+    (checked against a download of known speed).
+    """
+    from json import dumps
+
+    from tplinkrouterc6u import TPLinkDecoClient
+
+    with open(password_file) as f:
+        password = f.read().strip()
+    client = TPLinkDecoClient(url, password, timeout=15)
+    client.authorize()
+    peak: dict[str, tuple[int, int]] = {}
+    try:
+        for i in range(samples):
+            if i:
+                sleep(gap)
+            items = client.request(
+                "admin/client?form=client_list",
+                dumps({"operation": "read", "params": {"device_mac": "default"}}),
+            ).get("client_list", [])
+            for item in items:
+                if not item.get("mac"):
+                    continue
+                mac = normalize_mac(item["mac"])
+                down, up = int(item.get("down_speed") or 0), int(item.get("up_speed") or 0)
+                old = peak.get(mac, (0, 0))
+                peak[mac] = (max(old[0], down), max(old[1], up))
+    finally:
+        try:
+            client.logout()
+        except Exception:
+            log.debug("Deco logout failed", exc_info=True)
+    return peak

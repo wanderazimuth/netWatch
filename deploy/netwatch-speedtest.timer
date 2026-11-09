@@ -1,0 +1,10 @@
+[Unit]
+Description=Hourly NetWatch speed test, retried every 10 minutes while the internet is busy
+
+[Timer]
+# Each run does nothing once the hour has its test.
+OnCalendar=*:00/10
+RandomizedDelaySec=30
+
+[Install]
+WantedBy=timers.target

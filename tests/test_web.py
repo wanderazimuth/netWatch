@@ -160,6 +160,22 @@ class WebTest(unittest.TestCase):
         conn.close()
         self.assertEqual(self.post(f"/api/devices/{TV}/merge", {"from": OTHER}), 409)  # resume it first
 
+    def test_speed(self):
+        conn = db.connect(self.db_path)
+        conn.execute("INSERT INTO speedtests (ts, kind, down, up, ping) VALUES (strftime('%s'), 'full', 190, 20, 30)")
+        conn.commit()
+        conn.close()
+        data = json.loads(self.get("/api/speed?days=1")[1])
+        self.assertEqual(([t["down"] for t in data["tests"]], data["pending"]), ([190], False))
+        # Run test now leaves a request for the speed-test service's path unit.
+        self.assertEqual(self.post("/api/speed/run", {}), 200)
+        self.assertTrue(json.loads(self.get("/api/speed")[1])["pending"])
+        self.assertTrue(os.path.exists(os.path.join(os.path.dirname(self.db_path), "speedtest.request")))
+        os.remove(os.path.join(os.path.dirname(self.db_path), "speedtest.request"))
+        with self.assertRaises(urllib.error.HTTPError) as cm:
+            self.get("/api/speed?days=x")
+        self.assertEqual(cm.exception.code, 400)
+
     def test_people(self):
         s = json.loads(self.get("/api/settings")[1])
         self.assertEqual(s["people"], ["Roy", "Shanna", "Shaleece", "Spencer", "Fenly"])

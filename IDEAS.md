@@ -41,5 +41,5 @@ people build with similar tools (NetAlertX / Pi.Alert, WatchYourLAN, Fing).
 
 ### Small utilities
 - Wake-on-LAN buttons.
-- Internet speed tests logged over time (spot ISP slowdowns).
+- ~~Internet speed tests logged over time (spot ISP slowdowns).~~ Done: hourly, skipped while busy.
 - Per-device bandwidth, if the Deco API exposes per-client speeds (unverified).

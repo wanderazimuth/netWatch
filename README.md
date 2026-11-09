@@ -19,12 +19,14 @@ netwatch/
   db.py        SQLite schema
   notify.py    log + ntfy alerts (what to push, quiet hours, grouping)
   settings.py  alert settings stored in SQLite, edited from the dashboard
+  speed.py     hourly internet speed test (Ookla), put off while someone's streaming
   web.py       dashboard server (stdlib only) + JSON API
   static/      dashboard page
-  __main__.py  CLI: run | scan | devices | events | label | web
+  __main__.py  CLI: run | scan | devices | portscan | speedtest | events | label | web
 deploy/
   netwatch.service      scanner (runs as `netwatch` user with only CAP_NET_RAW)
   netwatch-web.service  dashboard on port 8080 (no capabilities)
+  netwatch-speedtest.*  speed test: every-10-minute timer, and a path unit for "Run test now"
   install.sh         install/update on the Pi
 tests/
 config.example.toml
@@ -163,6 +165,25 @@ device's page lists its open ports. The first scan of a device just records
 what's open; after that you get an alert when a device opens a port it has
 never had open before, e.g. an old printer starting to offer telnet. To run one
 now: `sudo systemctl start netwatch-portscan`.
+
+## Internet speed
+
+Click the speed figure on the dashboard for the graph: download and upload over 24 hours,
+7 days or 30 days, ping below, and your plan's speed as a dashed line (set it on that page).
+
+Once an hour the Pi runs [Ookla's Speedtest CLI](https://www.speedtest.net/apps/cli), but not
+while someone is using the internet. A systemd timer runs `netwatch speedtest` every 10
+minutes; once the hour has its test, the rest of the hour's runs do nothing. Before testing it
+watches the Deco's per-device traffic for about 20 seconds (the Deco reports kbit/s). If a phone,
+computer, TV, tablet or console (or a device not reviewed yet) moves more than the busy speed,
+1 Mbps by default, it runs only a 4-second ping check, which uses next to no data, and tries
+again 10 minutes later. Cameras, smart-home gear, network gear and servers don't count: they
+move data all day. An hour that never goes quiet shows as a grey mark on the graph. Failed
+tests show red; on Starlink, that's often an outage.
+
+"Run test now" skips the busy check. The dashboard can't run programs, so it leaves a request
+file that `netwatch-speedtest.path` sees. Ookla receives every test's result; each row in the
+table links to Ookla's page for it. Without a Deco configured, every hourly test runs.
 
 ## Command line
 

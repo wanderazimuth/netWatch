@@ -18,6 +18,9 @@ DEFAULTS = {
     "quiet_mode": "silent",  # during quiet hours: "silent" (no sound) or "skip" (don't send)
     "snooze_until": 0,  # unix seconds; no alerts before this
     "digest": "",  # "HH:MM": a daily alert listing devices still to review; empty = off
+    "speed_tests": True,  # hourly internet speed tests
+    "speed_busy_mbps": 1,  # skip a test while any device people use moves more than this
+    "speed_plan_mbps": 0,  # the download speed your plan promises, drawn on the graph; 0 = none
     "people": ["Roy", "Shanna", "Shaleece", "Spencer", "Fenly"],  # who a device can belong to
 }
 MAX_PEOPLE, MAX_PERSON = 30, 32
@@ -57,6 +60,10 @@ def validate(updates: dict) -> dict:
                 raise ValueError("people has the same name twice")
             if len(value) > MAX_PEOPLE:
                 raise ValueError(f"people can have at most {MAX_PEOPLE} names")
+        elif key in ("speed_busy_mbps", "speed_plan_mbps"):
+            low = 0.1 if key == "speed_busy_mbps" else 0
+            if not isinstance(value, (int, float)) or isinstance(value, bool) or not low <= value <= 10000:
+                raise ValueError(f"{key} must be a number from {low} to 10000")
         elif key == "snooze_until":
             if not isinstance(value, int) or isinstance(value, bool) or value < 0:
                 raise ValueError("snooze_until must be a unix timestamp")

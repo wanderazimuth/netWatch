@@ -1,0 +1,25 @@
+[Unit]
+Description=NetWatch internet speed test
+After=network-online.target netwatch.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=netwatch
+Group=netwatch
+WorkingDirectory=/opt/netwatch
+ExecStart=/opt/netwatch/.venv/bin/python -m netwatch --config /etc/netwatch/config.toml speedtest
+TimeoutStartSec=10min
+
+# Ookla's test and an unprivileged ping need no capabilities.
+CapabilityBoundingSet=
+NoNewPrivileges=true
+
+StateDirectory=netwatch
+# Ookla keeps its license acceptance under $HOME/.config.
+Environment=HOME=/var/lib/netwatch
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+
+MemoryMax=200M

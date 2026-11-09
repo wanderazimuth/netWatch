@@ -3,11 +3,14 @@ from __future__ import annotations
 import argparse
 import ipaddress
 import logging
+import os
 import time
 from datetime import datetime
 
 from . import config as config_mod
-from . import db, notify, pause, portscan, scanner, tracker
+from . import db, notify, pause, portscan, scanner, speed, tracker
+from . import deco as deco_mod
+from . import settings as settings_mod
 from .deco import Deco
 from .info import merge_info
 from .pihole import PiholeClient
@@ -106,6 +109,26 @@ def cmd_portscan(cfg, conn, args) -> None:
     notify.send(events, conn, cfg.ntfy_url, cfg.dashboard_url)
 
 
+def cmd_speedtest(cfg, conn, args) -> None:
+    forced = speed.take_request(os.path.dirname(cfg.db_path)) or args.now
+    s = settings_mod.load(conn)
+    if not forced and not s["speed_tests"]:
+        return
+    traffic = None
+    if cfg.deco is not None:
+        fetch = lambda: deco_mod.traffic(cfg.deco.url, cfg.deco.password_file)
+        traffic = lambda: speed.deco_traffic(conn, fetch, cfg.deco.password_file, int(time.time()))
+    r = speed.run(conn, int(time.time()), traffic, s["speed_busy_mbps"], force=forced)
+    if r is None:
+        log.debug("this hour already has its test")
+    elif r.error:
+        log.warning("%s test failed: %s", r.kind, r.error)
+    elif r.kind == "full":
+        log.info("download %.1f Mbps, upload %.1f Mbps, ping %.1f ms (%s)", r.down, r.up, r.ping, r.server)
+    else:
+        log.info("busy (%s): ping %s ms, %s%% lost", r.busy, r.ping, r.loss)
+
+
 def cmd_devices(cfg, conn, args) -> None:
     rows = conn.execute("SELECT * FROM devices").fetchall()
     rows.sort(key=lambda r: (not r["online"], ipaddress.ip_address(r["ip"]) if r["ip"] else ipaddress.ip_address("255.255.255.255")))
@@ -151,6 +174,9 @@ def main() -> None:
     sub.add_parser("devices", help="list known devices").set_defaults(func=cmd_devices)
     sub.add_parser("portscan", help="port scan online devices and alert on new open ports (weekly timer)"
                    ).set_defaults(func=cmd_portscan)
+    p = sub.add_parser("speedtest", help="hourly internet speed test, put off while the internet is busy (timer)")
+    p.add_argument("--now", action="store_true", help="test now, even if busy or already tested this hour")
+    p.set_defaults(func=cmd_speedtest)
     p = sub.add_parser("events", help="show recent join/leave events")
     p.add_argument("-n", "--limit", type=int, default=50)
     p.set_defaults(func=cmd_events)
