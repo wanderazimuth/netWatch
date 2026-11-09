@@ -14,7 +14,7 @@ people build with similar tools (NetAlertX / Pi.Alert, WatchYourLAN, Fing).
       and a review walk-through.~~ Done.
    2. ~~Alert buttons on a new-device ntfy alert: Review, Guest, Pause 1 h. Optionally a morning
       digest of devices still to review.~~ Done.
-   3. "Same device as…": move a device's name and notes to the new MAC a phone rotated to.
+   3. ~~"Same device as…": move a device's name and notes to the new MAC a phone rotated to.~~ Done.
 
 ## More ideas
 

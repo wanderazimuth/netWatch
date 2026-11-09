@@ -73,6 +73,11 @@ them one at a time, online ones first. For each, the device page's "About this d
 The rest of the page has the clues: the Deco it's connected through, its DNS lookups and open
 ports. **Skip** leaves a device for later; the "To review" filter and count show what's left.
 
+**Same device as…** is for a phone or laptop that switched to a new private MAC and so showed up as
+a new device. Pick the entry it used to be (likely matches come first: the same hostname or maker,
+a private MAC, offline now) and that entry's name, details, alerts and history move to the new MAC.
+The old entry is removed; if the old MAC ever comes back, it shows up as a new device again.
+
 ## Pause internet
 
 The device page's **Pause internet** button blocks every DNS lookup from that

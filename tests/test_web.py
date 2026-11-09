@@ -126,6 +126,40 @@ class WebTest(unittest.TestCase):
             self.assertEqual(self.post(f"/api/devices/{TV}/review", bad), 400, bad)
         self.assertEqual(self.post("/api/devices/aa:aa:aa:aa:aa:aa/review", {"status": "known"}), 404)
 
+    def test_merge(self):
+        # TV's old entry was reviewed; it then came back as NEW with a new private MAC.
+        new = "da:a1:19:00:00:02"
+        self.assertEqual(self.post(f"/api/devices/{TV}/review", {"label": "Roy's phone", "status": "known",
+                                                                 "kind": "phone", "person": "Roy"}), 200)
+        conn = db.connect(self.db_path)
+        conn.execute("UPDATE devices SET notify = 1 WHERE mac = ?", (TV,))
+        conn.execute("INSERT INTO ports (mac, port, proto, first_seen, last_seen) VALUES (?, 80, 'tcp', 0, 0)", (TV,))
+        conn.commit()
+        apply_scan(conn, [Sighting(new, "192.168.0.21")], 5000, 600)
+        conn.close()
+        self.assertEqual(self.post(f"/api/devices/{new}/review", {"room": "Office"}), 200)  # already said something
+        self.assertEqual(self.post(f"/api/devices/{new}/merge", {"from": TV}), 200)
+        devices = json.loads(self.get("/api/devices")[1])["devices"]
+        self.assertEqual([d["mac"] for d in devices], [new])
+        d = devices[0]
+        self.assertEqual((d["name"], d["status"], d["kind"], d["person"], d["room"], d["notify"], d["first_seen"]),
+                         ("Roy's phone", "known", "phone", "Roy", "Office", True, 1000))
+        conn = db.connect(self.db_path)
+        self.assertEqual({r["mac"] for r in conn.execute("SELECT mac FROM events")}, {new})  # history moved
+        self.assertEqual(conn.execute("SELECT COUNT(*) FROM ports").fetchone()[0], 0)
+        conn.close()
+
+    def test_merge_refusals(self):
+        self.assertEqual(self.post(f"/api/devices/{TV}/merge", {"from": TV}), 409)
+        self.assertEqual(self.post(f"/api/devices/{TV}/merge", {"from": OTHER}), 404)
+        self.assertEqual(self.post(f"/api/devices/{TV}/merge", {"from": "TV"}), 400)
+        conn = db.connect(self.db_path)
+        apply_scan(conn, [Sighting(OTHER, "192.168.0.30")], 1060, 600)
+        conn.execute("UPDATE devices SET paused_ip = ip WHERE mac = ?", (OTHER,))
+        conn.commit()
+        conn.close()
+        self.assertEqual(self.post(f"/api/devices/{TV}/merge", {"from": OTHER}), 409)  # resume it first
+
     def test_people(self):
         s = json.loads(self.get("/api/settings")[1])
         self.assertEqual(s["people"], ["Roy", "Shanna", "Shaleece", "Spencer", "Fenly"])

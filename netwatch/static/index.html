@@ -151,6 +151,14 @@
   .review-bar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 16px;
                 border-color: var(--accent); }
   .review-bar strong { margin-right: auto; }
+  .review-bar[hidden] { display: none; }
+  .picks { display: flex; flex-direction: column; gap: 4px; max-height: 50vh; overflow-y: auto; margin-top: 8px; }
+  .pick { text-align: left; font: inherit; color: inherit; background: var(--bg); border: 1px solid var(--border);
+          border-radius: 8px; padding: 6px 10px; cursor: pointer; }
+  .pick:hover, .pick.active { border-color: var(--accent); }
+  .pick .sub { display: block; }
+  #merge-search { font: inherit; width: 100%; padding: 6px 8px; border: 1px solid var(--border); border-radius: 7px;
+                  background: var(--bg); color: var(--text); }
   dialog textarea { font: inherit; width: 100%; padding: 6px 8px; border: 1px solid var(--border); border-radius: 7px;
                     background: var(--bg); color: var(--text); }
   @media (max-width: 900px) {
@@ -361,6 +369,25 @@
     <div class="hint" style="margin-top:6px">Taking someone off the list leaves them on the devices they already have.</div>
     <div class="btns" style="margin-top:10px"><button class="btn primary" id="people-save">Save</button></div>
     <div class="status" id="people-status"></div>
+  </div>
+</dialog>
+
+<dialog id="merge-dlg">
+  <div class="dlg-head">
+    <h2>Same device as…</h2>
+    <button class="x" id="merge-close" aria-label="Close">×</button>
+  </div>
+  <div class="dlg-body">
+    <p>Phones and laptops with Wi-Fi privacy on can switch to a new private MAC, and then look like a new
+      device. Pick the entry this one used to be, and its name, details, alerts and history move here.</p>
+    <input type="search" id="merge-search" placeholder="Search names, rooms, people…" aria-label="Search devices">
+    <div class="picks" id="merge-picks"></div>
+    <div id="merge-confirm" hidden>
+      <p id="merge-what"></p>
+      <div class="btns"><button class="btn primary" id="merge-go">Merge</button>
+        <button class="btn" id="merge-cancel">Cancel</button></div>
+    </div>
+    <div class="status" id="merge-status"></div>
   </div>
 </dialog>
 
@@ -916,6 +943,10 @@ function renderAbout(d) {
     skip.onclick = () => { skipped.add(d.mac); nextReview(d.mac); };
     buttons.push(skip);
   }
+  const same = el("button", { type: "button", className: "linkish", textContent: "Same device as…",
+                              title: "For a phone or laptop that switched to a new private MAC" });
+  same.onclick = () => openMerge(d);
+  buttons.push(same);
 
   box.replaceChildren(el("div", { className: "form" },
     ...field("f-label", "Name", label),
@@ -978,6 +1009,66 @@ $("people-save").onclick = async () => {
 };
 $("people-close").onclick = () => $("people-dlg").close();
 $("people-dlg").onclick = (e) => { if (e.target === $("people-dlg")) $("people-dlg").close(); };
+
+// ---- "same device as…": a device that came back with a new private MAC
+let mergeInto = null, mergeFrom = null;
+
+function likeness(a, b) {
+  // How likely b is the entry a used to be: the same name or maker, a private MAC, gone now.
+  return (a.hostname && a.hostname === b.hostname ? 8 : 0) + (a.vendor && a.vendor === b.vendor ? 4 : 0)
+    + (b.randomized ? 2 : 0) + (a.deco && a.deco === b.deco ? 1 : 0) + (b.online ? 0 : 1) + (b.status !== "review" ? 1 : 0);
+}
+
+function renderPicks() {
+  const q = $("merge-search").value.trim().toLowerCase();
+  const list = devices.filter((x) => x.mac !== mergeInto.mac)
+    .filter((x) => !q || [x.name, x.hostname, x.vendor, x.mac, x.floor, x.room, x.person, x.notes]
+      .some((v) => v && v.toLowerCase().includes(q)))
+    .sort((a, b) => likeness(mergeInto, b) - likeness(mergeInto, a) || b.last_seen - a.last_seen);
+  $("merge-picks").replaceChildren(...list.map((x) => {
+    const where = [place(x), x.person].filter(Boolean).join(" · ");
+    const b = el("button", { type: "button", className: "pick" + (mergeFrom === x ? " active" : "") },
+      (KINDS[x.kind] ? KINDS[x.kind][0] + " " : "") + x.name,
+      el("span", { className: "sub", textContent: [where, x.online ? "online now" : "last seen " + ago(x.last_seen),
+                                                   x.mac + (x.randomized ? " (private)" : "")].filter(Boolean).join(" — ") }));
+    b.onclick = () => {
+      mergeFrom = x;
+      $("merge-what").textContent = `Move ${x.name}'s name, details, alerts and history onto this device, `
+        + `and remove the old entry (${x.mac})?` + (x.online ? " It's online right now, so it may be a different device." : "");
+      $("merge-confirm").hidden = false;
+      renderPicks();
+    };
+    return b;
+  }));
+  if (!list.length) $("merge-picks").append(el("div", { className: "empty", textContent: "No matching devices." }));
+}
+
+function openMerge(d) {
+  mergeInto = d;
+  mergeFrom = null;
+  $("merge-search").value = "";
+  $("merge-confirm").hidden = true;
+  $("merge-status").textContent = "";
+  renderPicks();
+  $("merge-dlg").showModal();
+}
+$("merge-search").oninput = renderPicks;
+$("merge-cancel").onclick = () => { mergeFrom = null; $("merge-confirm").hidden = true; renderPicks(); };
+$("merge-go").onclick = async () => {
+  $("merge-go").disabled = true;
+  try {
+    const r = await post(`/api/devices/${mergeInto.mac}/merge`, { from: mergeFrom.mac });
+    devices = devices.filter((x) => x.mac !== mergeFrom.mac).map((x) => (x.mac === mergeInto.mac ? r.device : x));
+    $("merge-dlg").close();
+    if (reviewing && r.device.status !== "review") return nextReview(mergeInto.mac);
+    formMac = null;
+    loadDetail();
+    renderDevices();
+  } catch (e) { $("merge-status").textContent = "Not merged: " + e.message; }
+  finally { $("merge-go").disabled = false; }
+};
+$("merge-close").onclick = () => $("merge-dlg").close();
+$("merge-dlg").onclick = (e) => { if (e.target === $("merge-dlg")) $("merge-dlg").close(); };
 
 function renderPorts(ports, scanned) {
   const note = (text) => el("div", { className: "hint", style: "margin-top:10px", textContent: text });

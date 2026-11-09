@@ -29,7 +29,8 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
-DEVICE_PATH = re.compile(r"/api/devices/([0-9a-f]{2}(?::[0-9a-f]{2}){5})/(label|notify|down_after|pause|resume|review)")
+MAC = re.compile(r"[0-9a-f]{2}(?::[0-9a-f]{2}){5}")
+DEVICE_PATH = re.compile(r"/api/devices/([0-9a-f]{2}(?::[0-9a-f]{2}){5})/(label|notify|down_after|pause|resume|review|merge)")
 MAX_PAUSE = 7 * 86400
 DEVICE_INFO_PATH = re.compile(r"/api/devices/([0-9a-f]{2}(?::[0-9a-f]{2}){5})(/dns)?")
 MAX_HISTORY = 31 * 86400
@@ -285,6 +286,19 @@ def make_handler(db_path: str, ntfy_url: str = "", dashboard_url: str = "",
             row = conn.execute("SELECT * FROM devices WHERE mac = ?", (mac,)).fetchone()
             return self._json({"ok": True, "device": device_json(row, pausable, gateway)})
 
+        def _merge(self, conn, mac: str, body: dict):
+            old = body.get("from")
+            if not (isinstance(old, str) and MAC.fullmatch(old)):
+                return self._json({"error": "from must be the old device's MAC address"}, 400)
+            try:
+                inventory.merge(conn, old, mac)
+            except LookupError:
+                return self._json({"error": "unknown device"}, 404)
+            except ValueError as e:
+                return self._json({"error": str(e)}, 409)
+            row = conn.execute("SELECT * FROM devices WHERE mac = ?", (mac,)).fetchone()
+            return self._json({"ok": True, "device": device_json(row, pausable, gateway)})
+
         def _pause(self, conn, mac: str, action: str, body: dict):
             if pihole is None:
                 return self._json({"error": "Pi-hole isn't set up in config.toml"}, 409)
@@ -360,6 +374,8 @@ def make_handler(db_path: str, ntfy_url: str = "", dashboard_url: str = "",
                     return self._pause(conn, mac, field, body)
                 if field == "review":
                     return self._review(conn, mac, body)
+                if field == "merge":
+                    return self._merge(conn, mac, body)
                 if field == "label":
                     value = (body.get("label") or "").strip()[:64] or None
                     cur = conn.execute("UPDATE devices SET label = ? WHERE mac = ?", (value, mac))

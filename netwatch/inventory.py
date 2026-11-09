@@ -53,3 +53,35 @@ def clean(body: dict, people: list[str], current_person: str | None = None, now:
         out["status"] = body["status"] if reviewed else None
         out["reviewed"] = (now or int(time.time())) if reviewed else None
     return out
+
+
+# Moved from the old MAC to the new one, unless the new one already has its own.
+CARRIED = ("label", "kind", "floor", "room", "person", "notes", "down_after")
+
+
+def merge(conn, old: str, new: str) -> None:
+    """Make new the same device as old, for a phone that rotated its private MAC.
+
+    The new MAC gets the old one's name, details, alerts and history, and the old entry goes.
+    Raises LookupError for an unknown MAC and ValueError when they can't be merged.
+    """
+    if old == new:
+        raise ValueError("a device can't be the same device as itself")
+    rows = {r["mac"]: r for r in conn.execute("SELECT * FROM devices WHERE mac IN (?, ?)", (old, new))}
+    if old not in rows or new not in rows:
+        raise LookupError("unknown device")
+    o, n = rows[old], rows[new]
+    if o["paused_ip"]:
+        # Its Pi-hole block would be left behind with nobody to lift it.
+        raise ValueError("resume the old device's internet first")
+    updates = {k: o[k] if n[k] is None else n[k] for k in CARRIED}
+    # Status and when it was given go together.
+    updates.update({k: (n if n["status"] else o)[k] for k in ("status", "reviewed")})
+    updates["notify"] = max(o["notify"], n["notify"])
+    updates["first_seen"] = min(o["first_seen"], n["first_seen"])
+    conn.execute(f"UPDATE devices SET {', '.join(k + ' = ?' for k in updates)} WHERE mac = ?", (*updates.values(), new))
+    conn.execute("UPDATE events SET mac = ? WHERE mac = ?", (new, old))
+    # Open ports belong to the old address; the new one gets its own scan.
+    conn.execute("DELETE FROM ports WHERE mac = ?", (old,))
+    conn.execute("DELETE FROM devices WHERE mac = ?", (old,))
+    conn.commit()
