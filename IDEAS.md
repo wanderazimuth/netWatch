@@ -25,12 +25,11 @@ people build with similar tools (NetAlertX / Pi.Alert, WatchYourLAN, Fing).
 7. ~~**Who's home.**~~ Done. A person's phone on Wi-Fi means they're home, using the inventory's people
    and device owners. Needs a grace period: phones sleep their Wi-Fi.
 
-## More ideas
+8. ~~**Security checks.**~~ Done. Alerts when something poses as the router (ARP spoofing), two
+   devices answer for one IP, or a second DHCP server answers. Baseline on 2026-11-09: one router
+   MAC, no conflicts, only the Deco offering addresses.
 
-### Security
-- **ARP spoofing detection:** alert if the router's MAC address changes.
-- **Rogue DHCP / duplicate IP detection:** a second DHCP server or two devices
-  claiming one IP.
+## More ideas
 
 ### What devices are talking to
 - Flag chatty or tracker-heavy devices: lookups per hour, and how many hit Pi-hole's
@@ -51,4 +50,6 @@ people build with similar tools (NetAlertX / Pi.Alert, WatchYourLAN, Fing).
 - New-device triage: inventory and review walk-through, alert buttons and daily
   reminder, "Same device as…" for rotated private MACs.
 - Hourly internet speed tests with a graph, skipped while someone's streaming.
+- Per-device internet use (from the Deco's live speeds) and who's home (from each person's phones).
+- Security checks: router impersonation (ARP spoofing), IP conflicts, rogue DHCP servers.
 - Room-by-room Wi-Fi test from a phone: considered 2026-11-08, not wanted.

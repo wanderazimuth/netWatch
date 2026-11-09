@@ -8,7 +8,7 @@ import time
 from datetime import datetime
 
 from . import config as config_mod
-from . import db, notify, pause, portscan, scanner, speed, tracker, usage
+from . import db, notify, pause, portscan, scanner, security, speed, tracker, usage
 from . import deco as deco_mod
 from . import settings as settings_mod
 from .deco import Deco
@@ -24,8 +24,21 @@ def make_deco(cfg: config_mod.Config) -> Deco | None:
     return Deco(cfg.deco.url, cfg.deco.password_file, cfg.deco.poll_interval)
 
 
+def check_security(cfg: config_mod.Config, conn, answers: list[tuple[str, str]], now: int) -> list[tracker.Event]:
+    gateway = scanner.default_gateway()
+    check = security.Checker(conn, now)
+    check.arp(answers, gateway, security.kernel_arp(gateway) if gateway else set())
+    if check.dhcp_due():
+        try:
+            check.dhcp(security.dhcp_offers(cfg.interface), gateway)
+        except Exception:
+            log.warning("DHCP check failed; will retry", exc_info=True)
+    return check.save()
+
+
 def scan_once(cfg: config_mod.Config, conn, deco: Deco | None = None) -> list[tracker.Event]:
-    sightings = scanner.arp_scan(cfg.network, cfg.interface)
+    answers = scanner.arp_sweep(cfg.network, cfg.interface)
+    sightings = scanner.sightings(answers)
     pihole_info = deco_info = {}
     fresh = False
     if cfg.pihole is not None:
@@ -47,6 +60,7 @@ def scan_once(cfg: config_mod.Config, conn, deco: Deco | None = None) -> list[tr
     now = int(time.time())
     events = tracker.apply_scan(conn, sightings, now, cfg.offline_after, info)
     events += tracker.check_down(conn, now)
+    events += check_security(cfg, conn, answers, now)
     if fresh:
         usage.record(conn, now, {c.mac: (c.down, c.up) for c in deco.clients.values()}, deco.poll_interval)
     log.debug("scan found %d devices, %d events", len(sightings), len(events))

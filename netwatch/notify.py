@@ -23,11 +23,19 @@ MESSAGES = {
     "down": "{name} has been offline for {duration}",
     "up": "{name} is back online after {duration}",
     "port": "{name} ({ip}) has a new open port: {port}",
+    "router_mac": "The router ({ip}) answered from a MAC address it doesn't use: {who}, {detail}."
+                  " Something on the network may be posing as the router (ARP spoofing).",
+    "ip_conflict": "Two devices are answering for {ip}: {detail}",
+    "rogue_dhcp": "A second DHCP server is handing out addresses: {ip}, from {who}{offering}."
+                  " Devices that take its offer could be sent to the wrong router or DNS.",
 }
 TITLES = {"new": "New device on the network", "online": "Device arrived", "offline": "Device left",
-          "down": "Device down", "up": "Device back up", "port": "New open port"}
+          "down": "Device down", "up": "Device back up", "port": "New open port",
+          "router_mac": "Something may be posing as the router", "ip_conflict": "IP address conflict",
+          "rogue_dhcp": "Rogue DHCP server"}
 TAGS = {"new": "warning", "online": "house", "offline": "wave", "down": "rotating_light", "up": "white_check_mark",
-        "port": "unlock"}
+        "port": "unlock", "router_mac": "shield", "ip_conflict": "shield", "rogue_dhcp": "shield"}
+SECURITY = ("router_mac", "ip_conflict", "rogue_dhcp")
 MAX_LINES = 10
 DIGEST_DAYS = 7  # the digest lists devices still to review that were seen this recently
 
@@ -46,7 +54,10 @@ def format_duration(seconds: int) -> str:
 def format_event(e: Event) -> str:
     details = ", ".join(x for x in (e.ip, e.connection, e.mac) if x)
     duration = format_duration(e.seconds) if e.seconds is not None else ""
-    text = MESSAGES[e.kind].format(name=e.name, ip=e.ip, details=details, duration=duration, port=e.port)
+    who = f"{e.name} ({e.mac})" if e.name != e.mac else e.mac
+    offering = f", offering {e.detail}" if e.detail else ""
+    text = MESSAGES[e.kind].format(name=e.name, ip=e.ip, details=details, duration=duration, port=e.port,
+                                   who=who, detail=e.detail, offering=offering)
     if e.kind == "new" and is_randomized_mac(e.mac):
         text += " [private MAC -- may be a known phone]"
     return text
@@ -79,11 +90,14 @@ def plan(events: list[Event], settings: dict, watched: set[str], now: datetime) 
         elif e.kind == "port":
             if settings["port_alerts"]:
                 chosen.append(e)
+        elif e.kind in SECURITY:
+            if settings["security_alerts"]:
+                chosen.append(e)
     if not chosen:
         return [], None
     if in_quiet_hours(now, settings["quiet_start"], settings["quiet_end"]):
         return (chosen, "min") if settings["quiet_mode"] == "silent" else ([], None)
-    return chosen, "high" if any(e.kind == "down" for e in chosen) else "default"
+    return chosen, "high" if any(e.kind == "down" or e.kind in SECURITY for e in chosen) else "default"
 
 
 def build_message(events: list[Event]) -> tuple[str, str, str]:
@@ -95,20 +109,30 @@ def build_message(events: list[Event]) -> tuple[str, str, str]:
     if len(events) > MAX_LINES:
         lines.append(f"...and {len(events) - MAX_LINES} more")
     kinds = {e.kind for e in events}
-    tags = next((TAGS[k] for k in ("down", "new", "port") if k in kinds), TAGS[events[0].kind])
+    tags = next((TAGS[k] for k in ("router_mac", "rogue_dhcp", "down", "ip_conflict", "new", "port") if k in kinds),
+                TAGS[events[0].kind])
     return f"{len(events)} network changes", "\n".join(lines), tags
 
 
 def actions(events: list[Event], dashboard_url: str, can_pause: bool = False) -> list[dict]:
     """ntfy buttons for an alert with new devices: review one, call it a guest, or pause it for an hour.
+    A security problem gets a button to the security page first (ntfy shows at most three).
 
     The phone's ntfy app makes the Guest and Pause requests itself, so they need dashboard_url to be
     an address the phone can reach (the tailnet name).
     """
-    new = [e for e in events if e.kind == "new"]
-    if not dashboard_url or not new:
+    if not dashboard_url:
         return []
     base = dashboard_url.rstrip("/")
+    first = ([{"action": "view", "label": "Security", "url": base + "/#/security", "clear": True}]
+             if any(e.kind in SECURITY for e in events) else [])
+    return (first + new_device_actions(events, base, can_pause))[:3]
+
+
+def new_device_actions(events: list[Event], base: str, can_pause: bool) -> list[dict]:
+    new = [e for e in events if e.kind == "new"]
+    if not new:
+        return []
     if len(new) > 1:
         return [{"action": "view", "label": "Review devices", "url": base + "/#/review", "clear": True}]
     mac = new[0].mac

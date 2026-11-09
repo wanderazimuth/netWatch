@@ -77,6 +77,13 @@
           padding: 5px 12px; font: inherit; font-size: 13px; cursor: pointer; }
   .pill.off { color: var(--muted); }
   .pill.snoozed { border-color: var(--new); color: var(--new); }
+  .pill.alarm { border-color: var(--down); color: var(--down); }
+  .sec-row { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-top: 1px solid var(--border); }
+  .sec-row:first-child { border-top: 0; }
+  .sec-row .what { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+  .sec-ok { color: var(--on); }
+  .sec-bad { color: var(--down); font-weight: 700; }
   .bell { border: 0; background: none; cursor: pointer; font-size: 15px; padding: 2px 4px; filter: grayscale(1); opacity: .3; }
   .bell:hover { opacity: .7; }
   .bell.on { filter: none; opacity: 1; }
@@ -216,6 +223,7 @@
     <h1>NetWatch</h1>
     <div class="head-right">
       <span class="updated" id="updated">Loading…</span>
+      <button class="pill" id="security-pill" title="Network security checks">🛡️ Security</button>
       <button class="pill" id="alerts-pill" title="Alert settings">🔔 Alerts</button>
     </div>
   </header>
@@ -289,6 +297,37 @@
         </select>.
         A shorter time catches quick errands but may call a sleeping phone away.</p>
       <div class="status" id="away-status"></div>
+    </section>
+  </div>
+
+  <div id="security-view" hidden>
+    <a href="#" class="back">← All devices</a>
+    <section class="panel">
+      <h2>Router</h2>
+      <div id="sec-router"></div>
+    </section>
+    <section class="panel" style="margin-top:16px">
+      <h2>DHCP servers</h2>
+      <div id="sec-dhcp"></div>
+    </section>
+    <section class="panel" style="margin-top:16px">
+      <h2>IP address conflicts</h2>
+      <div id="sec-conflicts"></div>
+    </section>
+    <section class="panel" style="margin-top:16px">
+      <h2>Recent findings</h2>
+      <ul class="events" id="sec-history"></ul>
+    </section>
+    <section class="panel" style="margin-top:16px">
+      <h2>How it works</h2>
+      <p class="hint" style="font-size:13px">Every scan checks which MAC address answers for the router's IP, in the
+        scan and in the Pi's own ARP cache. A new one can mean a device is posing as the router to see others'
+        traffic (ARP spoofing). The same scan notices two devices answering for one IP. Every 15 minutes the Pi asks
+        for a DHCP offer, without taking an address, to find any DHCP server besides the router.
+        Each problem alerts once at high priority, and again only if it goes away for a day and comes back.</p>
+      <label class="row" style="margin-top:8px"><input type="checkbox" data-s="security_alerts">
+        <span>Send these alerts</span></label>
+      <div class="status" id="sec-status"></div>
     </section>
   </div>
 
@@ -404,6 +443,8 @@
         <span>🚨 Offline alerts<div class="hint">A device you've set a 🚨 time on hasn't answered for that long, and again when it's back. Sent at high priority. <span id="down-count"></span></div></span></label>
       <label class="row"><input type="checkbox" data-s="port_alerts">
         <span>New open ports<div class="hint">The weekly port scan finds a device accepting connections on a port it never had open before.</div></span></label>
+      <label class="row"><input type="checkbox" data-s="security_alerts">
+        <span>🛡️ Network security<div class="hint">Something posing as the router, two devices on one IP, or a second DHCP server. Sent at high priority. <a href="#/security" class="sec-link">See the checks</a></div></span></label>
     </div>
     <div class="group">
       <h3>Snooze</h3>
@@ -751,6 +792,7 @@ async function refresh() {
     if (reviewWhenLoaded) { reviewWhenLoaded = false; startReview(); }
     loadSpeed();
     loadPeople();
+    loadSecurity();
     if (detailMac) loadDetail();
     $("updated").textContent = saved
       ? "Offline: showing the list saved " + new Date(saved).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })
@@ -938,10 +980,17 @@ function route() {
   detail = null;
   formMac = null;
   const speedPage = location.hash === "#/speed", peoplePage = location.hash === "#/people";
-  $("list-view").hidden = !!detailMac || speedPage || peoplePage;
+  const securityPage = location.hash === "#/security";
+  $("list-view").hidden = !!detailMac || speedPage || peoplePage || securityPage;
   $("detail-view").hidden = !detailMac;
   $("speed-view").hidden = !speedPage;
   $("people-view").hidden = !peoplePage;
+  $("security-view").hidden = !securityPage;
+  if (securityPage) {
+    document.title = "Security · NetWatch";
+    window.scrollTo(0, 0);
+    return loadSecurity();
+  }
   if (peoplePage) {
     document.title = "Who's home · NetWatch";
     window.scrollTo(0, 0);
@@ -1684,6 +1733,90 @@ $("sp-on").onchange = () => saveSpeedSetting({ speed_tests: $("sp-on").checked }
 $("sp-busy").onchange = () => saveSpeedSetting({ speed_busy_mbps: Number($("sp-busy").value) });
 $("sp-plan").onchange = () => saveSpeedSetting({ speed_plan_mbps: Number($("sp-plan").value) || 0 });
 window.addEventListener("resize", () => { if (location.hash === "#/speed" && speed) renderSpeed(); });
+
+// ---- security checks (#/security)
+let securityData = null;
+
+async function loadSecurity() {
+  const onPage = location.hash === "#/security";
+  try {
+    const r = await fetch("/api/security");
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || "HTTP " + r.status);
+    securityData = data;
+    renderSecurityPill();
+    if (location.hash === "#/security") renderSecurity();
+  } catch (e) { if (onPage) showError("Couldn't load the security checks: " + e.message); }
+}
+
+// Problems seen within the last day; older ones are only history.
+function securityProblems() {
+  const d = securityData, recent = (ts) => d.now - ts < DAY;
+  return d.router.filter((x) => !x.trusted && recent(x.ts)).length
+    + d.dhcp.filter((x) => !x.trusted).length + d.conflicts.length;
+}
+
+function renderSecurityPill() {
+  const n = securityProblems();
+  $("security-pill").classList.toggle("alarm", n > 0);
+  $("security-pill").textContent = n ? `🛡️ ${n} security problem${n === 1 ? "" : "s"}` : "🛡️ Security";
+}
+
+function macLabel(name, mac) {
+  return el("span", {}, name && name !== mac ? name + " " : "", el("span", { className: "mono sub", textContent: mac }));
+}
+
+function trustButton(label, body) {
+  return el("button", { className: "btn", textContent: label, onclick: async () => {
+    try {
+      await post("/api/security/trust", body);
+      $("sec-status").textContent = "Saved.";
+      loadSecurity();
+    } catch (e) { $("sec-status").textContent = "Not saved: " + e.message; }
+  } });
+}
+
+function secRow(good, lines, button) {
+  return el("div", { className: "sec-row" },
+    el("span", { className: good ? "sec-ok" : "sec-bad", textContent: good ? "✓" : "!" }),
+    el("div", { className: "what" }, ...lines), button);
+}
+
+function renderSecurity() {
+  const d = securityData;
+  $("sec-router").replaceChildren(...(!d.router_ip || !d.router.length
+    ? [el("div", { className: "empty", textContent: "Not checked yet. The first scan learns the router's MAC address." })]
+    : d.router.map((x) => secRow(x.trusted, [
+        el("div", {}, macLabel(x.name, x.mac)),
+        el("div", { className: "sub", textContent: (x.trusted ? "The router, " : "Not the router's MAC, ")
+          + `answering for ${d.router_ip}, last seen ${ago(x.ts)}` })],
+        x.trusted ? null : trustButton("It's my new router", { router: x.mac })))));
+
+  const checked = d.dhcp_checked ? "Last checked " + ago(d.dhcp_checked) + "." : "Not checked yet.";
+  $("sec-dhcp").replaceChildren(
+    ...d.dhcp.map((o) => secRow(o.trusted, [
+      el("div", {}, o.server + " ", macLabel(o.name, o.mac)),
+      el("div", { className: "sub", textContent: `Offers ${o.offered}` + (o.router ? `, router ${o.router}` : "")
+        + (o.dns ? `, DNS ${o.dns}` : "") })],
+      o.trusted ? null : trustButton("I set this up", { dhcp: o.server }))),
+    el("div", { className: "hint", style: "margin-top:6px",
+      textContent: checked + (d.dhcp_checked && !d.dhcp.length ? " No DHCP server answered." : "") }));
+
+  $("sec-conflicts").replaceChildren(...(d.conflicts.length
+    ? d.conflicts.map((c) => secRow(false, [
+        el("div", {}, `${c.ip}: `, ...c.devices.flatMap((x, i) => [i ? ", " : "", macLabel(x.name, x.mac)])),
+        el("div", { className: "sub", textContent: "Last seen " + ago(c.ts) })]))
+    : [secRow(true, [el("div", { textContent: "None: every IP answers from one device." })])]));
+
+  $("sec-history").replaceChildren(...(d.history.length
+    ? d.history.map((h) => el("li", {}, el("span", { className: "ic", textContent: "🛡️" }),
+        el("div", {}, el("div", { textContent: h.text }),
+          el("div", { className: "when", textContent: ago(h.ts), title: fullTime(h.ts) }))))
+    : [el("li", { className: "empty", textContent: "Nothing found yet." })]));
+}
+
+$("security-pill").onclick = () => { location.hash = "#/security"; };
+document.querySelectorAll(".sec-link").forEach((a) => a.onclick = () => $("alerts").close());
 
 window.onhashchange = route;
 route();

@@ -22,6 +22,7 @@ netwatch/
   speed.py     hourly internet speed test (Ookla), put off while someone's streaming
   usage.py     each device's internet use, from the Deco's live speeds
   presence.py  who's home, from each person's phones
+  security.py  router impersonation, IP conflicts, rogue DHCP servers
   web.py       dashboard server (stdlib only) + JSON API
   static/      dashboard page
   __main__.py  CLI: run | scan | devices | portscan | speedtest | events | label | web
@@ -135,6 +136,7 @@ What gets pushed is controlled from the dashboard's **Alerts** button, no SSH ne
   back. Meant for always-on devices like the NAS or cameras; devices that are down
   show a red dot on the dashboard
 - **New open ports** found by the weekly port scan (below)
+- **Network security** problems (below), at high priority
 - **Snooze** for 1 / 8 / 24 hours
 - **Quiet hours** -- deliver silently, or don't send at all
 - **Daily review reminder** at a time you pick: the devices seen this week that are
@@ -158,6 +160,22 @@ every successful scan. Give the check a period of 1 minute and a grace time of
 10 minutes, and connect it to your ntfy topic or email: when pings stop -- Pi
 down, NetWatch stuck, or the house internet out -- it alerts you, and again when
 they resume.
+
+## Network security
+
+The **Security** button on the dashboard shows three checks, and each problem found sends an alert:
+
+- **Something posing as the router.** Every scan notes which MAC address answers for the
+  router's IP, both in the ARP sweep and in the Pi's own ARP cache. The first scan learns the
+  router's MAC; any other MAC answering for it may be a device intercepting traffic (ARP spoofing).
+- **IP conflicts:** two devices answering for one IP in two scans in a row.
+- **A second DHCP server.** Every 15 minutes the Pi broadcasts a DHCP discover and lists who
+  offers an address. It never accepts an offer, so nothing changes on the network. Any server
+  besides the router is flagged, and so is one claiming the router's IP from another MAC.
+
+Each problem alerts once, and again only if it went away for a day and came back. If you
+replace the router, or set up a second DHCP server on purpose, tap **It's my new router** or
+**I set this up** on the Security page and it stops alerting.
 
 ## Weekly port scan
 

@@ -60,6 +60,12 @@ class PlanTest(unittest.TestCase):
         self.s["port_alerts"] = False
         self.assertEqual(self.plan([ev("port")]), ([], None))
 
+    def test_security_alerts_are_high_priority(self):
+        for kind in ("router_mac", "ip_conflict", "rogue_dhcp"):
+            self.assertEqual(self.plan([ev(kind)]), ([kind], "high"))
+        self.s["security_alerts"] = False
+        self.assertEqual(self.plan([ev("router_mac")]), ([], None))
+
     def test_down_alerts_respect_quiet_hours(self):
         self.s.update(quiet_start="22:00", quiet_end="07:00")
         self.assertEqual(self.plan([ev("down")], now=datetime(2026, 10, 16, 23, 30)), (["down"], "min"))
@@ -162,6 +168,13 @@ class ActionsTest(unittest.TestCase):
     def test_nothing_new_or_no_dashboard(self):
         self.assertEqual(notify.actions([ev("online")], "https://dash"), [])
         self.assertEqual(notify.actions([ev("new")], ""), [])
+
+    def test_security_button_comes_first(self):
+        router = Event("router_mac", "00:11:22:33:44:99", "192.168.0.1", "PC", detail="in the scan")
+        self.assertEqual([b["label"] for b in notify.actions([router], "https://dash")], ["Security"])
+        self.assertEqual(notify.actions([router], "https://dash")[0]["url"], "https://dash/#/security")
+        both = notify.actions([router, ev("new")], "https://dash", can_pause=True)
+        self.assertEqual([b["label"] for b in both], ["Security", "Review", "Guest"])  # ntfy's limit is three
 
     def test_send_passes_buttons(self):
         conn = db.connect(":memory:")

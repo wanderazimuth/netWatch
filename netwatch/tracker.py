@@ -14,13 +14,14 @@ from .scanner import Sighting
 
 @dataclass(frozen=True)
 class Event:
-    kind: str  # new | online | offline | ip_change | down | up | port
+    kind: str  # new | online | offline | ip_change | down | up | port | router_mac | ip_conflict | rogue_dhcp
     mac: str
     ip: str | None
     name: str
     connection: str | None = None
     seconds: int | None = None  # down/up: how long the device has been / was unseen
     port: str | None = None  # port: the newly opened port, e.g. "23/tcp (telnet)"
+    detail: str | None = None  # security events: where it was seen, what was offered
 
 
 def apply_scan(

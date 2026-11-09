@@ -49,6 +49,35 @@ class WebTest(unittest.TestCase):
         except urllib.error.HTTPError as e:
             return e.code
 
+    def test_security(self):
+        from netwatch import security
+        conn = db.connect(self.db_path)
+        check = security.Checker(conn, 2000)
+        check.arp([("60:a4:b7:ae:7c:a4", "192.168.0.1")], "192.168.0.1", set())
+        check.save()
+        check = security.Checker(conn, 2060)
+        check.arp([(TV, "192.168.0.1")], "192.168.0.1", set())
+        check.dhcp([{"server": "192.168.0.1", "mac": "60:a4:b7:ae:7c:a4", "offered": "192.168.0.10",
+                     "router": "192.168.0.1", "dns": "192.168.0.1"}], "192.168.0.1")
+        check.save()
+        conn.close()
+        data = json.loads(self.get("/api/security")[1])
+        self.assertEqual(data["router_ip"], "192.168.0.1")
+        self.assertEqual([(r["mac"], r["trusted"]) for r in data["router"]], [(TV, False), ("60:a4:b7:ae:7c:a4", True)])
+        self.assertEqual([o["trusted"] for o in data["dhcp"]], [True])
+        self.assertEqual(data["history"][0]["kind"], "router_mac")
+        self.assertIn("posing as the router", data["history"][0]["text"])
+
+        self.assertEqual(self.post("/api/security/trust", {"router": TV}), 200)
+        self.assertEqual(self.post("/api/security/trust", {"dhcp": "192.168.0.66"}), 200)
+        data = json.loads(self.get("/api/security")[1])
+        self.assertTrue(data["router"][0]["trusted"])
+        self.assertEqual(data["trusted"], {"router": [TV], "dhcp": ["192.168.0.66"]})
+        for bad in ({}, {"router": "nope"}, {"dhcp": "300.1.1.1"}, {"dhcp": 5}):
+            self.assertEqual(self.post("/api/security/trust", bad), 400)
+        # The dashboard's settings endpoint can't touch the scanner's state.
+        self.assertEqual(self.post("/api/settings", {"security": {}}), 400)
+
     def test_index(self):
         status, body = self.get("/")
         self.assertEqual(status, 200)

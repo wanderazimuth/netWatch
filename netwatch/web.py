@@ -10,8 +10,6 @@ import json
 import logging
 import os
 import re
-import socket
-import struct
 import time
 from collections import Counter
 from typing import TYPE_CHECKING
@@ -19,14 +17,15 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib import resources
 from urllib.parse import parse_qs, urlparse
 
-from . import db, inventory, notify
+from . import db, inventory, notify, tracker
 from . import pause as pause_mod
 from . import presence
+from . import security as security_mod
 from . import settings as settings_mod
 from . import speed as speed_mod
 from . import usage as usage_mod
 from .pihole import PiholeClient
-from .scanner import is_randomized_mac
+from .scanner import default_gateway, is_randomized_mac
 
 if TYPE_CHECKING:
     from .config import PiholeConfig  # config imports tomllib, which the dashboard doesn't otherwise need
@@ -34,6 +33,7 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 MAC = re.compile(r"[0-9a-f]{2}(?::[0-9a-f]{2}){5}")
+IPV4 = re.compile(r"(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)")
 DEVICE_PATH = re.compile(r"/api/devices/([0-9a-f]{2}(?::[0-9a-f]{2}){5})/(label|notify|down_after|pause|resume|review|merge)")
 MAX_PAUSE = 7 * 86400
 TOP_USERS = 15
@@ -79,19 +79,6 @@ def device_json(r, pausable: frozenset[str] = frozenset(), gateway: str | None =
         "person": r["person"],
         "notes": r["notes"],
     }
-
-
-def default_gateway(route_file: str = "/proc/net/route") -> str | None:
-    """The router's IP, from the Pi's routing table."""
-    try:
-        with open(route_file) as f:
-            for line in f.readlines()[1:]:
-                _, dest, gateway, flags = line.split()[:4]
-                if dest == "00000000" and int(flags, 16) & 2:  # the default route, via a gateway
-                    return socket.inet_ntoa(struct.pack("<L", int(gateway, 16)))
-    except (OSError, ValueError):
-        pass
-    return None
 
 
 def can_pause(r, pausable: frozenset[str], gateway: str | None = None) -> bool:
@@ -230,6 +217,12 @@ def make_handler(db_path: str, ntfy_url: str = "", dashboard_url: str = "",
                 return self._usage(parse_qs(url.query))
             if url.path == "/api/people":
                 return self._people(parse_qs(url.query))
+            if url.path == "/api/security":
+                conn = db.connect(db_path)
+                try:
+                    return self._json(self._security(conn))
+                finally:
+                    conn.close()
             m = DEVICE_INFO_PATH.fullmatch(url.path)
             if m:
                 return self._device(m.group(1), parse_qs(url.query)) if not m.group(2) else self._dns(m.group(1))
@@ -340,6 +333,34 @@ def make_handler(db_path: str, ntfy_url: str = "", dashboard_url: str = "",
                 conn.close()
             return self._json({"now": now, "start": now - days * 86400, "people": people})
 
+        def _security(self, conn) -> dict:
+            state, trusted = security_mod.load_state(conn), security_mod.load_trust(conn)
+            names = {r["mac"]: db.display_name(r) for r in conn.execute("SELECT * FROM devices")}
+            known = set(state["router_macs"]) | set(trusted["router"])
+            router = [{"mac": m, "name": names.get(m), "ts": t, "trusted": m in known}
+                      for m, t in sorted(state["router_seen"].items(), key=lambda kv: -kv[1])]
+            offers = [{**o, "name": names.get(o["mac"]), "trusted": o["server"] in trusted["dhcp"] or (
+                o["server"] == state["router_ip"] and o["mac"] in known)} for o in state["dhcp_offers"]]
+            conflicts = [{"ip": ip, "ts": c["ts"], "devices": [{"mac": m, "name": names.get(m)} for m in c["macs"]]}
+                         for ip, c in state["conflicts"].items()]
+            history = [{**h, "name": names.get(h["mac"]), "text": notify.format_event(tracker.Event(
+                h["kind"], h["mac"], h["ip"], names.get(h["mac"], h["mac"]), detail=h["detail"]))}
+                for h in state["history"]]
+            return {"now": int(time.time()), "router_ip": state["router_ip"], "router": router,
+                    "dhcp_checked": state["dhcp_checked"], "dhcp": offers, "conflicts": conflicts,
+                    "history": history, "trusted": trusted, "enabled": settings_mod.load(conn)["security_alerts"]}
+
+        def _trust(self, conn, body: dict):
+            router, dhcp = body.get("router"), body.get("dhcp")
+            if router is not None and not (isinstance(router, str) and MAC.fullmatch(router)):
+                return self._json({"error": "router must be a MAC address"}, 400)
+            if dhcp is not None and not (isinstance(dhcp, str) and IPV4.fullmatch(dhcp)):
+                return self._json({"error": "dhcp must be an IPv4 address"}, 400)
+            if router is None and dhcp is None:
+                return self._json({"error": "send router or dhcp"}, 400)
+            security_mod.trust(conn, router, dhcp)
+            return self._json({"ok": True, **self._security(conn)})
+
         def _settings(self, conn) -> dict:
             return {**settings_mod.load(conn), "ntfy_configured": bool(ntfy_url), "pihole_configured": pihole is not None,
                     "floors": inventory.FLOORS, "kinds": inventory.KINDS, "now": int(time.time())}
@@ -446,6 +467,9 @@ def make_handler(db_path: str, ntfy_url: str = "", dashboard_url: str = "",
                     except ValueError as e:
                         return self._json({"error": str(e)}, 400)
                     return self._json(self._settings(conn))
+
+                if path == "/api/security/trust":
+                    return self._trust(conn, body)
 
                 m = DEVICE_PATH.fullmatch(path)
                 if not m:

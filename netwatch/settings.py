@@ -13,6 +13,7 @@ DEFAULTS = {
     "watched": True,  # alert when devices you've belled come online / go offline
     "down_alerts": True,  # alert when a device with an offline alert has been unseen too long
     "port_alerts": True,  # alert when the weekly port scan finds a newly opened port
+    "security_alerts": True,  # router impersonation, IP conflicts, rogue DHCP servers
     "quiet_start": "",  # "HH:MM" local time; empty = no quiet hours
     "quiet_end": "",
     "quiet_mode": "silent",  # during quiet hours: "silent" (no sound) or "skip" (don't send)
