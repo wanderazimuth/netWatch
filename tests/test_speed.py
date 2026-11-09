@@ -50,13 +50,49 @@ class ParseTest(unittest.TestCase):
         self.assertEqual(speed._error(FileNotFoundError(2, "No such file", "speedtest")), "speedtest isn't installed")
 
 
+class ServersTest(unittest.TestCase):
+    def fake_ookla(self, failing):
+        import subprocess
+        calls = []
+
+        def run(cmd, **kw):
+            server = next((c.split("=")[1] for c in cmd if c.startswith("--server-id=")), None)
+            calls.append(server)
+            if server in failing:
+                raise subprocess.CalledProcessError(2, cmd, stderr='{"message": "Server not found"}')
+            return mock.Mock(stdout=OOKLA)
+        return calls, mock.patch.object(speed.subprocess, "run", side_effect=run)
+
+    def test_first_server_that_works(self):
+        calls, patch = self.fake_ookla(failing={"2185"})
+        with patch, self.assertLogs("netwatch.speed", "WARNING"):
+            r = speed.run_full([2185, 8863])
+        self.assertEqual((calls, r.error), (["2185", "8863"], None))
+
+    def test_falls_back_to_ooklas_pick(self):
+        calls, patch = self.fake_ookla(failing={"2185", "8863"})
+        with patch, self.assertLogs("netwatch.speed", "WARNING"):
+            self.assertIsNone(speed.run_full([2185, 8863]).error)
+        self.assertEqual(calls, ["2185", "8863", None])
+        calls, patch = self.fake_ookla(failing={None})
+        with patch, self.assertLogs("netwatch.speed", "WARNING"):
+            self.assertEqual(speed.run_full([]).error, "Server not found")
+
+    def test_setting(self):
+        self.assertEqual(settings.DEFAULTS["speed_servers"], [2185, 8863])
+        self.assertEqual(settings.validate({"speed_servers": []}), {"speed_servers": []})
+        for bad in ([0], [1, 1], ["2185"], [True], list(range(1, 8)), 2185):
+            with self.assertRaises(ValueError):
+                settings.validate({"speed_servers": bad})
+
+
 class RunTest(unittest.TestCase):
     def setUp(self):
         self.conn = db.connect(":memory:")
         for mac, label, kind in ((ROKU, "Roku TV", "tv"), (DOORBELL, "Doorbell", "camera")):
             self.conn.execute("INSERT INTO devices (mac, label, kind, first_seen, last_seen) VALUES (?, ?, ?, 0, 0)",
                               (mac, label, kind))
-        self.full = mock.patch.object(speed, "run_full", side_effect=lambda: speed.Result("full", down=190, up=20, ping=30))
+        self.full = mock.patch.object(speed, "run_full", side_effect=lambda servers=(): speed.Result("full", down=190, up=20, ping=30))
         self.ping = mock.patch.object(speed, "run_ping", side_effect=lambda busy: speed.Result("ping", ping=60, busy=busy))
         self.run_full, self.run_ping = self.full.start(), self.ping.start()
         self.addCleanup(mock.patch.stopall)

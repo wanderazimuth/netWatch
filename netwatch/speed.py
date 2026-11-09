@@ -23,7 +23,7 @@ log = logging.getLogger(__name__)
 
 SPEEDTEST = ["speedtest", "--format=json", "--accept-license", "--accept-gdpr"]
 PING = ["ping", "-c", "20", "-i", "0.2", "-W", "2", "1.1.1.1"]
-TIMEOUT = 180
+TIMEOUT = 120  # a test takes about 30 s; up to three tries fit the service's 10 minutes
 # Devices that move data all day without anyone using them, so they never make the internet "busy".
 BACKGROUND_KINDS = frozenset({"camera", "smart_home", "appliance", "printer", "network", "server"})
 # Touched by the dashboard's "Run test now"; a systemd path unit starts the test when it appears.
@@ -84,13 +84,22 @@ def _error(e: Exception) -> str:
     return str(e) or type(e).__name__
 
 
-def run_full() -> Result:
-    try:
-        out = subprocess.run(SPEEDTEST, capture_output=True, text=True, check=True, timeout=TIMEOUT).stdout
-        return parse_ookla(out)
-    except Exception as e:
-        log.warning("speed test failed: %s", _error(e))
-        return Result("full", error=_error(e))
+def run_full(servers: list[int] = ()) -> Result:
+    """Test against the first of servers (Ookla server IDs) that works, then Ookla's own pick.
+
+    Ookla picks the server with the lowest ping, and from a Starlink connection that's often one
+    that can't fill the line (75-110 Mbps, against 180+ from others, measured 2026-11-09).
+    """
+    error = None
+    for server in [*servers, None]:
+        cmd = SPEEDTEST + ([f"--server-id={server}"] if server else [])
+        try:
+            out = subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=TIMEOUT).stdout
+            return parse_ookla(out)
+        except Exception as e:
+            error = _error(e)
+            log.warning("speed test %sfailed: %s", f"with server {server} " if server else "", error)
+    return Result("full", error=error)
 
 
 def run_ping(busy: str) -> Result:
@@ -164,7 +173,8 @@ def hour_start(now: int) -> int:
     return int(datetime.fromtimestamp(now).replace(minute=0, second=0, microsecond=0).timestamp())
 
 
-def run(conn: sqlite3.Connection, now: int, traffic, busy_mbps: float, force: bool = False) -> Result | None:
+def run(conn: sqlite3.Connection, now: int, traffic, busy_mbps: float, force: bool = False,
+        servers: list[int] = ()) -> Result | None:
     """One timer run. traffic() returns each client's (down, up) kbit/s, None when the Deco can't
     say, or is None itself when there's no Deco to ask. Returns what was recorded, if anything."""
     start = hour_start(now)
@@ -187,7 +197,7 @@ def run(conn: sqlite3.Connection, now: int, traffic, busy_mbps: float, force: bo
             result = run_ping(busy)
             record(conn, now, result)
             return result
-    result = run_full()
+    result = run_full(servers)
     record(conn, now, result)
     return result
 

@@ -131,12 +131,15 @@ def cmd_speedtest(cfg, conn, args) -> None:
     forced = speed.take_request(os.path.dirname(cfg.db_path)) or args.now
     s = settings_mod.load(conn)
     if not forced and not s["speed_tests"]:
+        # The timer runs every 10 minutes; say so once an hour, so a switched-off test isn't a mystery.
+        if datetime.now().minute < 10:
+            log.info("hourly speed tests are switched off (dashboard: speed page, Settings)")
         return
     traffic = None
     if cfg.deco is not None:
         fetch = lambda: deco_mod.traffic(cfg.deco.url, cfg.deco.password_file)
         traffic = lambda: speed.deco_traffic(conn, fetch, cfg.deco.password_file, int(time.time()))
-    r = speed.run(conn, int(time.time()), traffic, s["speed_busy_mbps"], force=forced)
+    r = speed.run(conn, int(time.time()), traffic, s["speed_busy_mbps"], force=forced, servers=s["speed_servers"])
     if r is None:
         log.debug("this hour already has its test")
     elif r.error:

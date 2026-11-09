@@ -343,6 +343,8 @@
         </div>
         <button class="btn primary" id="speed-run">Run test now</button>
       </div>
+      <div class="warn" id="sp-off" hidden style="margin:0 0 10px">Hourly tests are switched off, so only tests
+        you run yourself appear. Turn them on under Settings below.</div>
       <div class="speed-latest" id="speed-latest"></div>
       <div class="chart" id="speed-chart"></div>
       <div class="chart" id="ping-chart"></div>
@@ -381,6 +383,10 @@
           <div><input type="number" id="sp-busy" min="0.1" max="10000" step="0.5"> Mbps</div>
           <label for="sp-plan">Plan speed</label>
           <div><input type="number" id="sp-plan" min="0" max="10000" step="10"> Mbps</div>
+          <label for="sp-servers">Test servers</label>
+          <div><input type="text" id="sp-servers" inputmode="numeric" placeholder="Ookla's pick" style="width:12em">
+            <div class="hint">Ookla server IDs, tried in order, then Ookla's own pick. Ookla picks the lowest ping,
+              which isn't always a server fast enough for the line. Set: SUMOFIBER (2185), then CenturyLink (8863).</div></div>
         </div>
         <div class="hint" style="margin-top:10px">Before each test the Deco is asked how much every device is using.
           If a phone, computer, TV, tablet or console is moving more than the busy speed (a stream or a video
@@ -1694,7 +1700,9 @@ function renderSpeed() {
     $("sp-on").checked = settings.speed_tests;
     $("sp-busy").value = settings.speed_busy_mbps;
     $("sp-plan").value = settings.speed_plan_mbps || "";
+    $("sp-servers").value = settings.speed_servers.join(", ");
   }
+  $("sp-off").hidden = !settings || settings.speed_tests;
 }
 
 $("s-speed-box").onclick = () => { location.hash = "#/speed"; };
@@ -1732,6 +1740,9 @@ async function saveSpeedSetting(updates) {
 $("sp-on").onchange = () => saveSpeedSetting({ speed_tests: $("sp-on").checked });
 $("sp-busy").onchange = () => saveSpeedSetting({ speed_busy_mbps: Number($("sp-busy").value) });
 $("sp-plan").onchange = () => saveSpeedSetting({ speed_plan_mbps: Number($("sp-plan").value) || 0 });
+$("sp-servers").onchange = () => saveSpeedSetting({
+  speed_servers: $("sp-servers").value.split(/[\s,]+/).filter(Boolean).map(Number),
+});
 window.addEventListener("resize", () => { if (location.hash === "#/speed" && speed) renderSpeed(); });
 
 // ---- security checks (#/security)

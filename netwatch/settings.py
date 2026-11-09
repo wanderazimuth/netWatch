@@ -22,10 +22,12 @@ DEFAULTS = {
     "speed_tests": True,  # hourly internet speed tests
     "speed_busy_mbps": 1,  # skip a test while any device people use moves more than this
     "speed_plan_mbps": 0,  # the download speed your plan promises, drawn on the graph; 0 = none
+    "speed_servers": [2185, 8863],  # Ookla server IDs to test against, in order; then Ookla's pick
     "away_after": 60,  # minutes all of a person's phones must be gone before they count as away
     "people": ["Roy", "Shanna", "Shaleece", "Spencer", "Fenly"],  # who a device can belong to
 }
 MAX_PEOPLE, MAX_PERSON = 30, 32
+MAX_SERVERS = 5
 
 TIME = re.compile(r"(?:[01]\d|2[0-3]):[0-5]\d")
 
@@ -66,6 +68,12 @@ def validate(updates: dict) -> dict:
             low = 0.1 if key == "speed_busy_mbps" else 0
             if not isinstance(value, (int, float)) or isinstance(value, bool) or not low <= value <= 10000:
                 raise ValueError(f"{key} must be a number from {low} to 10000")
+        elif key == "speed_servers":
+            if not (isinstance(value, list) and len(value) <= MAX_SERVERS and all(
+                    isinstance(v, int) and not isinstance(v, bool) and 0 < v < 10_000_000 for v in value)):
+                raise ValueError(f"speed_servers must be up to {MAX_SERVERS} Ookla server IDs")
+            if len(set(value)) != len(value):
+                raise ValueError("speed_servers has the same server twice")
         elif key == "away_after":
             if not isinstance(value, int) or isinstance(value, bool) or not 10 <= value <= 720:
                 raise ValueError("away_after must be 10 to 720 minutes")

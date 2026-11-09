@@ -201,6 +201,12 @@ again 10 minutes later. Cameras, smart-home gear, network gear and servers don't
 move data all day. An hour that never goes quiet shows as a grey mark on the graph. Failed
 tests show red; on Starlink, that's often an outage.
 
+Tests go to the servers listed under **Test servers** on the speed page, in order, and to
+Ookla's own pick only if those fail. Ookla picks the server with the lowest ping, and from
+Starlink in Salt Lake City that was often one topping out at 75-110 Mbps while others gave
+180+. The default is SUMOFIBER (2185), then CenturyLink (8863). `speedtest -L` lists nearby
+server IDs.
+
 "Run test now" skips the busy check. The dashboard can't run programs, so it leaves a request
 file that `netwatch-speedtest.path` sees. Ookla receives every test's result; each row in the
 table links to Ookla's page for it. Without a Deco configured, every hourly test runs.
