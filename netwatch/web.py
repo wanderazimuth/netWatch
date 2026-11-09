@@ -23,6 +23,7 @@ from . import db, inventory, notify
 from . import pause as pause_mod
 from . import settings as settings_mod
 from . import speed as speed_mod
+from . import usage as usage_mod
 from .pihole import PiholeClient
 from .scanner import is_randomized_mac
 
@@ -34,6 +35,7 @@ log = logging.getLogger(__name__)
 MAC = re.compile(r"[0-9a-f]{2}(?::[0-9a-f]{2}){5}")
 DEVICE_PATH = re.compile(r"/api/devices/([0-9a-f]{2}(?::[0-9a-f]{2}){5})/(label|notify|down_after|pause|resume|review|merge)")
 MAX_PAUSE = 7 * 86400
+TOP_USERS = 15
 DEVICE_INFO_PATH = re.compile(r"/api/devices/([0-9a-f]{2}(?::[0-9a-f]{2}){5})(/dns)?")
 MAX_HISTORY = 31 * 86400
 DNS_LIMIT = 10000  # newest queries to tally; a chatty device can make more in a day
@@ -223,6 +225,8 @@ def make_handler(db_path: str, ntfy_url: str = "", dashboard_url: str = "",
                     conn.close()
             if url.path == "/api/speed":
                 return self._speed(parse_qs(url.query))
+            if url.path == "/api/usage":
+                return self._usage(parse_qs(url.query))
             m = DEVICE_INFO_PATH.fullmatch(url.path)
             if m:
                 return self._device(m.group(1), parse_qs(url.query)) if not m.group(2) else self._dns(m.group(1))
@@ -247,6 +251,11 @@ def make_handler(db_path: str, ntfy_url: str = "", dashboard_url: str = "",
                     "events": events_json(conn, 100, mac),
                     "ports_scanned": row["ports_scanned"],
                     "ports": ports_json(conn, mac, row["ports_scanned"]),
+                    "usage": usage_mod.series(conn, mac, since),
+                    "usage_totals": {
+                        "day": usage_mod.totals(conn, now - 86400, mac).get(mac, (0, 0)),
+                        "week": usage_mod.totals(conn, now - 7 * 86400, mac).get(mac, (0, 0)),
+                    },
                 })
             finally:
                 conn.close()
@@ -283,6 +292,35 @@ def make_handler(db_path: str, ntfy_url: str = "", dashboard_url: str = "",
                 conn.close()
             pending = os.path.exists(os.path.join(os.path.dirname(db_path), speed_mod.REQUEST_FILE))
             return self._json({"now": now, "tests": tests, "pending": pending})
+
+        def _usage(self, query: dict):
+            """Who's using the internet: the latest Deco poll, and estimated totals over some days."""
+            try:
+                days = min(max(int(query.get("days", ["1"])[0]), 1), usage_mod.KEEP_DAYS)
+            except ValueError:
+                return self._json({"error": "days must be a number"}, 400)
+            now = int(time.time())
+            conn = db.connect(db_path)
+            try:
+                rows = {r["mac"]: r for r in conn.execute("SELECT * FROM devices")}
+                ts, speeds = usage_mod.latest(conn)
+                totals = usage_mod.totals(conn, now - days * 86400)
+            finally:
+                conn.close()
+
+            def who(mac: str) -> dict:
+                r = rows.get(mac)
+                return {"mac": mac, "name": db.display_name(r) if r else mac,
+                        "kind": r["kind"] if r else None, "person": r["person"] if r else None}
+
+            return self._json({
+                "now": now,
+                "latest_ts": ts,
+                "latest": sorted(({**who(m), "down": d, "up": u} for m, (d, u) in speeds.items()),
+                                 key=lambda x: -(x["down"] + x["up"])),
+                "top": sorted(({**who(m), "down_mb": d, "up_mb": u} for m, (d, u) in totals.items()),
+                              key=lambda x: -(x["down_mb"] + x["up_mb"]))[:TOP_USERS],
+            })
 
         def _settings(self, conn) -> dict:
             return {**settings_mod.load(conn), "ntfy_configured": bool(ntfy_url), "pihole_configured": pihole is not None,

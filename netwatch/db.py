@@ -52,6 +52,17 @@ CREATE TABLE IF NOT EXISTS ports (
     PRIMARY KEY (mac, port, proto)
 );
 
+-- Each device's live speed at every Deco poll (usage.py); only polls that caught it busy.
+CREATE TABLE IF NOT EXISTS traffic (
+    ts   INTEGER NOT NULL,
+    mac  TEXT NOT NULL,
+    down INTEGER NOT NULL,        -- kbit/s
+    up   INTEGER NOT NULL,
+    secs INTEGER NOT NULL         -- how long the reading stands for: the poll interval
+);
+CREATE INDEX IF NOT EXISTS traffic_mac_ts ON traffic(mac, ts);
+CREATE INDEX IF NOT EXISTS traffic_ts ON traffic(ts);
+
 -- Hourly internet speed tests (speed.py).
 CREATE TABLE IF NOT EXISTS speedtests (
     id     INTEGER PRIMARY KEY,

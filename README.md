@@ -20,6 +20,7 @@ netwatch/
   notify.py    log + ntfy alerts (what to push, quiet hours, grouping)
   settings.py  alert settings stored in SQLite, edited from the dashboard
   speed.py     hourly internet speed test (Ookla), put off while someone's streaming
+  usage.py     each device's internet use, from the Deco's live speeds
   web.py       dashboard server (stdlib only) + JSON API
   static/      dashboard page
   __main__.py  CLI: run | scan | devices | portscan | speedtest | events | label | web
@@ -184,6 +185,14 @@ tests show red; on Starlink, that's often an outage.
 "Run test now" skips the busy check. The dashboard can't run programs, so it leaves a request
 file that `netwatch-speedtest.path` sees. Ookla receives every test's result; each row in the
 table links to Ookla's page for it. Without a Deco configured, every hourly test runs.
+
+## Internet use per device
+
+Every Deco poll (5 minutes) also records each device's live download and upload speed, which
+the Deco reports in kbit/s. Each device's page shows its use over the last 7 days in 2-hour
+bars, with rough totals for today and the week, and the speed page shows who's using the
+internet right now and who used the most data. A poll is a snapshot, so totals are estimates
+(speed × 5 minutes): fine for "who uses the most", not for billing. Kept for 30 days.
 
 ## Command line
 

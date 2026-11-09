@@ -32,6 +32,8 @@ class DecoClient:
     name: str | None
     connection: str | None
     deco: str | None = None  # name of the Deco unit it's connected through
+    down: int = 0  # live speed in kbit/s when polled
+    up: int = 0
 
 
 def normalize_mac(mac) -> str:
@@ -82,6 +84,7 @@ class Deco:
             status = client.get_status()
             nodes = client.get_mesh_nodes()
             via = self._clients_by_node(client, nodes)
+            speeds = self._speeds(client)
         finally:
             try:
                 client.logout()
@@ -95,6 +98,8 @@ class Deco:
                 name=d.hostname if usable_name(d.hostname) else None,
                 connection=connection_label(d.type.name),
                 deco=via.get(normalize_mac(d.macaddr)),
+                down=speeds.get(normalize_mac(d.macaddr), (0, 0))[0],
+                up=speeds.get(normalize_mac(d.macaddr), (0, 0))[1],
             )
             for d in status.devices
             if d.active
@@ -107,22 +112,25 @@ class Deco:
         return found
 
     @staticmethod
+    def _speeds(client) -> dict[str, tuple[int, int]]:
+        """Each client's live (down, up) kbit/s. Optional: on failure, none."""
+        try:
+            return parse_speeds(client_list(client))
+        except Exception:
+            log.debug("Deco client speeds failed", exc_info=True)
+            return {}
+
+    @staticmethod
     def _clients_by_node(client, nodes) -> dict[str, str]:
         """Map client MAC -> name of the Deco it's connected through.
 
         The combined client list doesn't say which unit a client is on, but
         asking each unit for its own list does. Optional: on failure, skip it.
         """
-        from json import dumps
-
         via = {}
         for node in nodes:
             try:
-                node_mac = normalize_mac(node.macaddr).replace(":", "-").upper()
-                items = client.request(
-                    "admin/client?form=client_list",
-                    dumps({"operation": "read", "params": {"device_mac": node_mac}}),
-                ).get("client_list", [])
+                items = client_list(client, normalize_mac(node.macaddr).replace(":", "-").upper())
             except Exception:
                 log.debug("Deco client list for %s failed", node.name, exc_info=True)
                 continue
@@ -168,14 +176,31 @@ class Deco:
         ]
 
 
+def client_list(client, device_mac: str = "default") -> list[dict]:
+    """The Deco's raw client list: one unit's clients, or with "default" every unit's.
+
+    Only "default" includes the main unit's clients. Each item has down_speed and up_speed
+    in kbit/s (checked against a download of known speed).
+    """
+    from json import dumps
+
+    return client.request(
+        "admin/client?form=client_list",
+        dumps({"operation": "read", "params": {"device_mac": device_mac}}),
+    ).get("client_list", [])
+
+
+def parse_speeds(items: list[dict]) -> dict[str, tuple[int, int]]:
+    return {normalize_mac(i["mac"]): (int(i.get("down_speed") or 0), int(i.get("up_speed") or 0))
+            for i in items if i.get("mac")}
+
+
 def traffic(url: str, password_file: str, samples: int = 4, gap: float = 5, sleep=time.sleep) -> dict[str, tuple[int, int]]:
     """Each client's peak (down, up) speed in kbit/s, over a few samples a few seconds apart.
 
     Streaming comes in bursts, so one reading can land between them. The Deco reports kbit/s
     (checked against a download of known speed).
     """
-    from json import dumps
-
     from tplinkrouterc6u import TPLinkDecoClient
 
     with open(password_file) as f:
@@ -187,15 +212,7 @@ def traffic(url: str, password_file: str, samples: int = 4, gap: float = 5, slee
         for i in range(samples):
             if i:
                 sleep(gap)
-            items = client.request(
-                "admin/client?form=client_list",
-                dumps({"operation": "read", "params": {"device_mac": "default"}}),
-            ).get("client_list", [])
-            for item in items:
-                if not item.get("mac"):
-                    continue
-                mac = normalize_mac(item["mac"])
-                down, up = int(item.get("down_speed") or 0), int(item.get("up_speed") or 0)
+            for mac, (down, up) in parse_speeds(client_list(client)).items():
                 old = peak.get(mac, (0, 0))
                 peak[mac] = (max(old[0], down), max(old[1], up))
     finally:

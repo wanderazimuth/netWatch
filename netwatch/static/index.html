@@ -168,6 +168,16 @@
   .speed-form input[type=number] { font: inherit; width: 90px; padding: 5px 8px; border: 1px solid var(--border);
                                    border-radius: 7px; background: var(--bg); color: var(--text); }
   .speed-table td, .speed-table th { white-space: nowrap; }
+  .usage-cols { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
+  .usage-h { font-size: 13px; margin: 0 0 6px; font-weight: 600; }
+  .use-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 10px; padding: 4px 0;
+             border-bottom: 1px solid var(--border); font-size: 13px; }
+  .use-row a { color: inherit; text-decoration: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .use-row a:hover { color: var(--accent); }
+  .use-row .num { font-variant-numeric: tabular-nums; color: var(--muted); }
+  .use-bar { grid-column: 1 / -1; height: 3px; display: flex; }
+  .use-bar i { display: block; height: 100%; }
+  @media (max-width: 600px) { .usage-cols { grid-template-columns: minmax(0, 1fr); } }
   .speed-table td.note { white-space: normal; color: var(--muted); }
   .picks { display: flex; flex-direction: column; gap: 4px; max-height: 50vh; overflow-y: auto; margin-top: 8px; }
   .pick { text-align: left; font: inherit; color: inherit; background: var(--bg); border: 1px solid var(--border);
@@ -269,6 +279,15 @@
         <span><i style="background:var(--down)"></i>Test failed</span>
       </div>
     </section>
+    <section class="panel" style="margin-top:16px">
+      <h2>Who's using the internet</h2>
+      <div class="usage-cols">
+        <div><h3 class="usage-h" id="use-now-h">Right now</h3><div id="use-now"></div></div>
+        <div><h3 class="usage-h" id="use-top-h">Most data</h3><div id="use-top"></div></div>
+      </div>
+      <div class="hint" style="margin-top:8px">From the Deco's live speed for each device, checked every 5 minutes.
+        Data totals are estimates: a check is a snapshot, so short bursts between checks are missed.</div>
+    </section>
     <div class="layout" style="margin-top:16px">
       <section class="panel">
         <h2>Recent tests</h2>
@@ -314,6 +333,7 @@
       <section class="panel"><h2>About this device</h2><div id="d-about"></div></section>
       <section class="panel"><h2>Details</h2><dl class="facts" id="d-facts"></dl></section>
       <section class="panel"><h2>Online, last 7 days</h2><div id="d-history"></div></section>
+      <section class="panel"><h2>Internet use, last 7 days</h2><div id="d-usage"></div></section>
       <section class="panel"><h2>DNS lookups</h2><div id="d-dns"></div></section>
       <section class="panel"><h2>Open ports</h2><div id="d-ports"></div></section>
       <section class="panel"><h2>Activity</h2><ul class="events" id="d-events"></ul></section>
@@ -756,6 +776,7 @@ async function loadSettings() {
     settings = await fetch("/api/settings").then((r) => r.json());
     renderSettings();
     if (detail && formMac !== detail.device.mac) renderDetail();  // the About form waits for the people list
+    if (speed && location.hash === "#/speed") renderSpeed();  // the plan line and settings need them too
   } catch (e) { /* refresh() reports connectivity problems */ }
 }
 
@@ -893,7 +914,7 @@ function route() {
     return renderDevices();
   }
   window.scrollTo(0, 0);
-  for (const id of ["d-name", "d-status", "d-actions", "d-about", "d-facts", "d-history", "d-ports", "d-events"]) $(id).replaceChildren();
+  for (const id of ["d-name", "d-status", "d-actions", "d-about", "d-facts", "d-history", "d-usage", "d-ports", "d-events"]) $(id).replaceChildren();
   $("d-name").textContent = "Loading…";
   $("d-dot").className = "dot";
   loadDetail();
@@ -946,6 +967,7 @@ function renderDetail() {
   if (formMac !== d.mac) renderAbout(d);
 
   renderHistory(h);
+  renderUsage(detail.usage, detail.usage_totals);
   renderPorts(detail.ports, detail.ports_scanned);
   renderEvents(detail.events, $("d-events"));
 }
@@ -1240,6 +1262,91 @@ function renderDns(x) {
   );
 }
 
+// ---- internet use per device (from the Deco's live speeds, every 5 minutes)
+const bytes = (mb) => mb >= 1000 ? (mb / 1000).toFixed(mb >= 10000 ? 0 : 1) + " GB" : Math.round(mb) + " MB";
+const rate = (kbps) => kbps >= 1000 ? (kbps / 1000).toFixed(1) + " Mbps" : kbps + " kbps";
+
+// Polls added up into buckets of estimated MB down and up.
+function usageBars(points, start, end, bucket) {
+  const bars = [];
+  for (let t = start; t < end; t += bucket) bars.push({ t0: t, t1: Math.min(t + bucket, end), down: 0, up: 0 });
+  for (const [ts, down, up, secs] of points) {
+    const b = bars[Math.floor((ts - start) / bucket)];
+    if (b) { b.down += down * secs / 8000; b.up += up * secs / 8000; }
+  }
+  return bars;
+}
+
+function renderUsage(points, totals) {
+  const box = $("d-usage");
+  const [dayDown, dayUp] = totals.day, [weekDown, weekUp] = totals.week;
+  const last = points.at(-1);
+  const now = last && serverNow - last[0] < 600
+    ? `Using ${rate(last[1])} down, ${rate(last[2])} up right now.` : "Not using the internet at the last check.";
+  if (!points.length) {
+    return box.replaceChildren(el("div", { className: "empty", textContent: "No internet use seen this week." }),
+      el("div", { className: "hint", textContent: "Only devices the Deco knows about are measured; wired devices behind another switch may not show." }));
+  }
+  const end = serverNow, start = end - 7 * DAY, bucket = 2 * 3600;
+  const bars = usageBars(points, start, end, bucket);
+  const top = niceMax(Math.max(10, ...bars.map((b) => b.down + b.up)));
+  const panel = el("div", { className: "chart" });
+  box.replaceChildren(
+    el("div", { className: "sub", textContent: `Today ≈ ${bytes(dayDown)} down, ${bytes(dayUp)} up · this week ≈ ${bytes(weekDown)} down, ${bytes(weekUp)} up` }),
+    el("div", { className: "sub", style: "margin-bottom:6px", textContent: now }),
+    panel,
+    el("div", { className: "legend" },
+      el("span", {}, el("i", { style: "background:var(--accent)" }), "Download"),
+      el("span", {}, el("i", { style: "background:var(--on)" }), "Upload"),
+      el("span", { textContent: "MB per 2 hours, estimated" })),
+  );
+  chart(panel, { height: 150, start, end, max: top, unit: "MB", bars: bars.map((b) => {
+    const when = new Date(b.t0 * 1000).toLocaleString([], { weekday: "short", hour: "numeric" });
+    const title = `${when}: ≈ ${bytes(b.down)} down, ${bytes(b.up)} up`;
+    return { t0: b.t0, t1: b.t1, stack: [[b.down, "var(--accent)", title], [b.up, "var(--on)", title]] };
+  }) });
+}
+
+let usage = null;
+async function loadUsage() {
+  try {
+    const r = await fetch(`/api/usage?days=${speedDays}`);
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || "HTTP " + r.status);
+    usage = data;
+    renderUsageLists();
+  } catch (e) { $("use-now").replaceChildren(el("div", { className: "empty", textContent: "Couldn't load: " + e.message })); }
+}
+
+function useRow(u, text, down, up, max) {
+  const bar = el("div", { className: "use-bar" });
+  for (const [v, color] of [[down, "var(--accent)"], [up, "var(--on)"]]) {
+    const i = el("i", { style: `background:${color}` });
+    i.style.width = (v / max * 100) + "%";
+    bar.append(i);
+  }
+  const icon = KINDS[u.kind] ? KINDS[u.kind][0] + " " : "";
+  return el("div", { className: "use-row" },
+    el("a", { href: "#/device/" + u.mac, textContent: icon + u.name + (u.person ? ` (${u.person})` : "") }),
+    el("span", { className: "num", textContent: text }), bar);
+}
+
+function renderUsageLists() {
+  const fresh = usage.latest_ts && usage.now - usage.latest_ts < 600;
+  // A trickle of background chatter isn't "using the internet".
+  const busy = fresh ? usage.latest.filter((u) => u.down + u.up >= 100) : [];
+  $("use-now-h").textContent = usage.latest_ts ? `Right now (checked ${ago(usage.latest_ts)})` : "Right now";
+  const maxNow = Math.max(1, ...busy.map((u) => u.down + u.up));
+  $("use-now").replaceChildren(...(busy.length
+    ? busy.map((u) => useRow(u, `${rate(u.down)} ↓ ${rate(u.up)} ↑`, u.down, u.up, maxNow))
+    : [el("div", { className: "empty", textContent: fresh || !usage.latest_ts ? "Nobody's using much." : "No recent check from the Deco." })]));
+  $("use-top-h").textContent = `Most data, last ${speedDays === 1 ? "24 hours" : speedDays + " days"}`;
+  const maxTop = Math.max(1, ...usage.top.map((u) => u.down_mb + u.up_mb));
+  $("use-top").replaceChildren(...(usage.top.length
+    ? usage.top.map((u) => useRow(u, `≈ ${bytes(u.down_mb + u.up_mb)}`, u.down_mb, u.up_mb, maxTop))
+    : [el("div", { className: "empty", textContent: "Nothing recorded yet." })]));
+}
+
 // ---- internet speed (#/speed)
 let speedDays = 7, speed = null, speedWait = null;
 const mbps = (v) => v == null ? "–" : v >= 100 ? String(Math.round(v)) : v.toFixed(1);
@@ -1253,7 +1360,7 @@ async function loadSpeed() {
     if (!r.ok) throw new Error(data.error || "HTTP " + r.status);
     speed = data;
     renderSpeedStat();
-    if (location.hash === "#/speed") renderSpeed();
+    if (location.hash === "#/speed") { renderSpeed(); loadUsage(); }
   } catch (e) { if (onPage) showError("Couldn't load speed tests: " + e.message); }
 }
 
@@ -1278,7 +1385,7 @@ function niceMax(v) {
 }
 
 // One chart: lines of points over time, broken where tests are more than 3 hours apart.
-function chart(box, { height, start, end, max, unit, series, plan, marks = [] }) {
+function chart(box, { height, start, end, max, unit, series = [], plan, marks = [], bars = [] }) {
   const W = Math.max(box.clientWidth, 280), L = 38, R = 8, T = 22, B = 20, H = height;
   const x = (t) => L + (t - start) / (end - start) * (W - L - R);
   const y = (v) => T + (1 - Math.min(v, max) / max) * (H - T - B);
@@ -1317,6 +1424,17 @@ function chart(box, { height, start, end, max, unit, series, plan, marks = [] })
         svg.append(svgEl("circle", { cx: x(t.ts), cy: y(s.value(t)), r: hollow ? 3 : 2.5,
           fill: hollow ? "var(--panel)" : s.color, stroke: s.color, "stroke-width": 1.5 }));
       }
+    }
+  }
+  // Stacked bars: { t0, t1, stack: [[value, color, title], ...] }
+  for (const b of bars) {
+    let base = 0;
+    const w = Math.max(x(b.t1) - x(b.t0) - 1, 1);
+    for (const [v, color, title] of b.stack) {
+      if (!v) continue;
+      svg.append(svgEl("rect", { x: x(b.t0) + 0.5, y: y(base + v), width: w, height: Math.max(y(base) - y(base + v), 1), fill: color },
+        title ? svgEl("title", {}, title) : null));
+      base += v;
     }
   }
   for (const m of marks) svg.append(svgEl("rect", { x: x(m.ts) - 1.5, y: H - B - 6, width: 3, height: 6, fill: m.color }));

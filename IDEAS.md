@@ -16,30 +16,39 @@ people build with similar tools (NetAlertX / Pi.Alert, WatchYourLAN, Fing).
       digest of devices still to review.~~ Done.
    3. ~~"Same device as…": move a device's name and notes to the new MAC a phone rotated to.~~ Done.
 
-## More ideas
+## Next
 
-### Presence detection ("who's home")
-- Phone joins Wi-Fi = person is home. Feed into Home Assistant (MQTT or webhook)
-  for lights, thermostat, arming cameras.
-- Phones sleep their Wi-Fi radio, so require a grace period (e.g. gone 10+ min)
-  before calling someone away.
+6. ~~**Per-device bandwidth.**~~ Done. The Deco's combined client list has each device's live down/up
+   speed in kbit/s (checked 2026-11-08 against a download of known speed; the per-unit lists
+   miss the main unit's clients). Record it with every Deco poll, graph it on each device's
+   page, and show who's using the internet on the speed page.
+7. **Who's home.** A person's phone on Wi-Fi means they're home, using the inventory's people
+   and device owners. Needs a grace period: phones sleep their Wi-Fi.
+
+## More ideas
 
 ### Security
 - **ARP spoofing detection:** alert if the router's MAC address changes.
 - **Rogue DHCP / duplicate IP detection:** a second DHCP server or two devices
   claiming one IP.
-- **Unexpected open ports** (see port scan above), e.g. telnet on an old printer.
 
 ### What devices are talking to
-- Pi-hole logs DNS per client: show lookups per device, flag chatty or
-  tracker-heavy IoT devices.
+- Flag chatty or tracker-heavy devices: lookups per hour, and how many hit Pi-hole's
+  block lists. (Each device's page already lists its lookups.)
+- Home Assistant feed for who's home (MQTT or webhook): lights, thermostat, cameras.
 
-### Inventory and history
-- First seen / last seen, uptime timeline, notes ("the dishwasher").
-- "What was on the network last Tuesday at 2am?" Most of this data is already
-  in the database, just not shown.
+### History
+- "What was on the network last Tuesday at 2am?" The data is already in the
+  database; it needs a time picker.
 
 ### Small utilities
 - Wake-on-LAN buttons.
-- ~~Internet speed tests logged over time (spot ISP slowdowns).~~ Done: hourly, skipped while busy.
-- Per-device bandwidth, if the Deco API exposes per-client speeds (unverified).
+
+## Done
+
+- Offline alerts, per-device pages, pause internet, weekly port scan (with alerts for
+  newly opened ports), DNS lookups per device, uptime timeline, first/last seen.
+- New-device triage: inventory and review walk-through, alert buttons and daily
+  reminder, "Same device as…" for rotated private MACs.
+- Hourly internet speed tests with a graph, skipped while someone's streaming.
+- Room-by-room Wi-Fi test from a phone: considered 2026-11-08, not wanted.

@@ -62,7 +62,8 @@ CARRIED = ("label", "kind", "floor", "room", "person", "notes", "down_after")
 def merge(conn, old: str, new: str) -> None:
     """Make new the same device as old, for a phone that rotated its private MAC.
 
-    The new MAC gets the old one's name, details, alerts and history, and the old entry goes.
+    The new MAC gets the old one's name, details, alerts and history (events and internet use),
+    and the old entry goes.
     Raises LookupError for an unknown MAC and ValueError when they can't be merged.
     """
     if old == new:
@@ -81,6 +82,7 @@ def merge(conn, old: str, new: str) -> None:
     updates["first_seen"] = min(o["first_seen"], n["first_seen"])
     conn.execute(f"UPDATE devices SET {', '.join(k + ' = ?' for k in updates)} WHERE mac = ?", (*updates.values(), new))
     conn.execute("UPDATE events SET mac = ? WHERE mac = ?", (new, old))
+    conn.execute("UPDATE traffic SET mac = ? WHERE mac = ?", (new, old))
     # Open ports belong to the old address; the new one gets its own scan.
     conn.execute("DELETE FROM ports WHERE mac = ?", (old,))
     conn.execute("DELETE FROM devices WHERE mac = ?", (old,))

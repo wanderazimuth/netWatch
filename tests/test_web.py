@@ -176,6 +176,21 @@ class WebTest(unittest.TestCase):
             self.get("/api/speed?days=x")
         self.assertEqual(cm.exception.code, 400)
 
+    def test_usage(self):
+        import time
+
+        from netwatch import usage
+
+        conn = db.connect(self.db_path)
+        conn.execute("UPDATE devices SET label = 'Roku TV', kind = 'tv' WHERE mac = ?", (TV,))
+        usage.record(conn, int(time.time()) - 60, {TV: (8000, 80)}, 300)
+        conn.close()
+        data = json.loads(self.get("/api/usage?days=1")[1])
+        self.assertEqual([(u["name"], u["kind"], u["down"]) for u in data["latest"]], [("Roku TV", "tv", 8000)])
+        self.assertEqual([(u["mac"], u["down_mb"], u["up_mb"]) for u in data["top"]], [(TV, 300.0, 3.0)])
+        d = json.loads(self.get(f"/api/devices/{TV}")[1])
+        self.assertEqual((len(d["usage"]), d["usage_totals"]["day"]), (1, [300.0, 3.0]))
+
     def test_people(self):
         s = json.loads(self.get("/api/settings")[1])
         self.assertEqual(s["people"], ["Roy", "Shanna", "Shaleece", "Spencer", "Fenly"])

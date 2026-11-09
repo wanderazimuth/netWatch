@@ -8,7 +8,7 @@ import time
 from datetime import datetime
 
 from . import config as config_mod
-from . import db, notify, pause, portscan, scanner, speed, tracker
+from . import db, notify, pause, portscan, scanner, speed, tracker, usage
 from . import deco as deco_mod
 from . import settings as settings_mod
 from .deco import Deco
@@ -27,6 +27,7 @@ def make_deco(cfg: config_mod.Config) -> Deco | None:
 def scan_once(cfg: config_mod.Config, conn, deco: Deco | None = None) -> list[tracker.Event]:
     sightings = scanner.arp_scan(cfg.network, cfg.interface)
     pihole_info = deco_info = {}
+    fresh = False
     if cfg.pihole is not None:
         try:
             pihole_info = PiholeClient(cfg.pihole.url, cfg.pihole.password).device_info()
@@ -36,7 +37,8 @@ def scan_once(cfg: config_mod.Config, conn, deco: Deco | None = None) -> list[tr
     if deco is not None:
         # Only count the Deco's clients as present when the list is fresh;
         # between polls it is up to poll_interval old.
-        if deco.refresh():
+        fresh = deco.refresh()
+        if fresh:
             arp_macs = {s.mac for s in sightings}
             sightings += [s for s in deco.sightings(cfg.network) if s.mac not in arp_macs]
         deco_info = deco.device_info()
@@ -45,6 +47,8 @@ def scan_once(cfg: config_mod.Config, conn, deco: Deco | None = None) -> list[tr
     now = int(time.time())
     events = tracker.apply_scan(conn, sightings, now, cfg.offline_after, info)
     events += tracker.check_down(conn, now)
+    if fresh:
+        usage.record(conn, now, {c.mac: (c.down, c.up) for c in deco.clients.values()}, deco.poll_interval)
     log.debug("scan found %d devices, %d events", len(sightings), len(events))
     return events
 
