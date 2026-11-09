@@ -22,7 +22,7 @@ people build with similar tools (NetAlertX / Pi.Alert, WatchYourLAN, Fing).
    speed in kbit/s (checked 2026-11-08 against a download of known speed; the per-unit lists
    miss the main unit's clients). Record it with every Deco poll, graph it on each device's
    page, and show who's using the internet on the speed page.
-7. **Who's home.** A person's phone on Wi-Fi means they're home, using the inventory's people
+7. ~~**Who's home.**~~ Done. A person's phone on Wi-Fi means they're home, using the inventory's people
    and device owners. Needs a grace period: phones sleep their Wi-Fi.
 
 ## More ideas

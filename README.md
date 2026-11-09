@@ -21,6 +21,7 @@ netwatch/
   settings.py  alert settings stored in SQLite, edited from the dashboard
   speed.py     hourly internet speed test (Ookla), put off while someone's streaming
   usage.py     each device's internet use, from the Deco's live speeds
+  presence.py  who's home, from each person's phones
   web.py       dashboard server (stdlib only) + JSON API
   static/      dashboard page
   __main__.py  CLI: run | scan | devices | portscan | speedtest | events | label | web
@@ -193,6 +194,15 @@ the Deco reports in kbit/s. Each device's page shows its use over the last 7 day
 bars, with rough totals for today and the week, and the speed page shows who's using the
 internet right now and who used the most data. A poll is a snapshot, so totals are estimates
 (speed × 5 minutes): fine for "who uses the most", not for billing. Kept for 30 days.
+
+## Who's home
+
+The dashboard shows who's home under the stats; tap a name for a 7-day timeline per person.
+Someone is home while one of their phones or watches is on the network: a device whose
+Person is them and whose Type is Phone or Wearable (laptops and TVs stay home when people
+leave). Phones go quiet on Wi-Fi while asleep (gaps of 20-60 minutes are common), so someone
+counts as away only once all their phones have been gone for an hour; that's adjustable on
+the page. Errands shorter than that don't show.
 
 ## Command line
 

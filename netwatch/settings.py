@@ -21,6 +21,7 @@ DEFAULTS = {
     "speed_tests": True,  # hourly internet speed tests
     "speed_busy_mbps": 1,  # skip a test while any device people use moves more than this
     "speed_plan_mbps": 0,  # the download speed your plan promises, drawn on the graph; 0 = none
+    "away_after": 60,  # minutes all of a person's phones must be gone before they count as away
     "people": ["Roy", "Shanna", "Shaleece", "Spencer", "Fenly"],  # who a device can belong to
 }
 MAX_PEOPLE, MAX_PERSON = 30, 32
@@ -64,6 +65,9 @@ def validate(updates: dict) -> dict:
             low = 0.1 if key == "speed_busy_mbps" else 0
             if not isinstance(value, (int, float)) or isinstance(value, bool) or not low <= value <= 10000:
                 raise ValueError(f"{key} must be a number from {low} to 10000")
+        elif key == "away_after":
+            if not isinstance(value, int) or isinstance(value, bool) or not 10 <= value <= 720:
+                raise ValueError("away_after must be 10 to 720 minutes")
         elif key == "snooze_until":
             if not isinstance(value, int) or isinstance(value, bool) or value < 0:
                 raise ValueError("snooze_until must be a unix timestamp")

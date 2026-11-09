@@ -191,6 +191,15 @@ class WebTest(unittest.TestCase):
         d = json.loads(self.get(f"/api/devices/{TV}")[1])
         self.assertEqual((len(d["usage"]), d["usage_totals"]["day"]), (1, [300.0, 3.0]))
 
+    def test_whos_home(self):
+        self.assertEqual(self.post(f"/api/devices/{TV}/review", {"kind": "phone", "person": "Roy"}), 200)
+        conn = db.connect(self.db_path)
+        conn.execute("UPDATE devices SET last_seen = strftime('%s') WHERE mac = ?", (TV,))
+        conn.commit()
+        conn.close()
+        people = {p["person"]: p for p in json.loads(self.get("/api/people")[1])["people"]}
+        self.assertEqual((people["Roy"]["home"], people["Shanna"]["home"]), (True, None))
+
     def test_people(self):
         s = json.loads(self.get("/api/settings")[1])
         self.assertEqual(s["people"], ["Roy", "Shanna", "Shaleece", "Spencer", "Fenly"])

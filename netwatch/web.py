@@ -21,6 +21,7 @@ from urllib.parse import parse_qs, urlparse
 
 from . import db, inventory, notify
 from . import pause as pause_mod
+from . import presence
 from . import settings as settings_mod
 from . import speed as speed_mod
 from . import usage as usage_mod
@@ -227,6 +228,8 @@ def make_handler(db_path: str, ntfy_url: str = "", dashboard_url: str = "",
                 return self._speed(parse_qs(url.query))
             if url.path == "/api/usage":
                 return self._usage(parse_qs(url.query))
+            if url.path == "/api/people":
+                return self._people(parse_qs(url.query))
             m = DEVICE_INFO_PATH.fullmatch(url.path)
             if m:
                 return self._device(m.group(1), parse_qs(url.query)) if not m.group(2) else self._dns(m.group(1))
@@ -321,6 +324,21 @@ def make_handler(db_path: str, ntfy_url: str = "", dashboard_url: str = "",
                 "top": sorted(({**who(m), "down_mb": d, "up_mb": u} for m, (d, u) in totals.items()),
                               key=lambda x: -(x["down_mb"] + x["up_mb"]))[:TOP_USERS],
             })
+
+        def _people(self, query: dict):
+            try:
+                days = min(max(int(query.get("days", ["1"])[0]), 1), 30)
+            except ValueError:
+                return self._json({"error": "days must be a number"}, 400)
+            now = int(time.time())
+            conn = db.connect(db_path)
+            try:
+                s = settings_mod.load(conn)
+                people = presence.people(conn, s["people"], now - days * 86400, now, offline_after,
+                                         s["away_after"] * 60, online_spans)
+            finally:
+                conn.close()
+            return self._json({"now": now, "start": now - days * 86400, "people": people})
 
         def _settings(self, conn) -> dict:
             return {**settings_mod.load(conn), "ntfy_configured": bool(ntfy_url), "pihole_configured": pihole is not None,

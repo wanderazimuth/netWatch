@@ -168,6 +168,19 @@
   .speed-form input[type=number] { font: inherit; width: 90px; padding: 5px 8px; border: 1px solid var(--border);
                                    border-radius: 7px; background: var(--bg); color: var(--text); }
   .speed-table td, .speed-table th { white-space: nowrap; }
+  .home-strip { display: flex; gap: 8px; flex-wrap: wrap; margin: -4px 0 16px; }
+  .chip { font: inherit; font-size: 13px; color: var(--muted); background: var(--panel); border: 1px solid var(--border);
+          border-radius: 999px; padding: 5px 12px; cursor: pointer; }
+  .chip strong { color: var(--text); font-weight: 600; }
+  .chip.home { border-color: var(--on); }
+  .chip:hover { border-color: var(--accent); }
+  .person-row { padding: 10px 0; border-bottom: 1px solid var(--border); }
+  .person-head { display: flex; gap: 10px; align-items: baseline; margin-bottom: 6px; }
+  .person-phones { margin-top: 4px; }
+  .person-phones a { color: var(--accent); text-decoration: none; }
+  .tl-tick { width: 1px; background: var(--border); }
+  .people-axis { position: relative; height: 16px; font-size: 11px; color: var(--muted); }
+  .people-axis span { position: absolute; transform: translateX(2px); }
   .usage-cols { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
   .usage-h { font-size: 13px; margin: 0 0 6px; font-weight: 600; }
   .use-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 10px; padding: 4px 0;
@@ -216,6 +229,7 @@
     <div class="stat"><div class="v" id="s-events">–</div><div class="k">Events in last 24h</div></div>
     <div class="stat clickable" id="s-speed-box" title="Internet speed over time"><div class="v" id="s-speed">–</div><div class="k" id="s-speed-k">Internet speed</div></div>
   </section>
+  <section class="home-strip" id="home-strip" hidden></section>
 
   <div class="layout">
     <section class="panel">
@@ -253,6 +267,29 @@
       <ul class="events" id="events"></ul>
     </section>
   </div>
+  </div>
+
+  <div id="people-view" hidden>
+    <a href="#" class="back">← All devices</a>
+    <section class="panel">
+      <h2>Who's home, last 7 days</h2>
+      <div id="people-rows"></div>
+      <div class="people-axis" id="people-axis"></div>
+    </section>
+    <section class="panel" style="margin-top:16px">
+      <h2>How it works</h2>
+      <p class="hint" style="font-size:13px">Someone is home while one of their phones (or watches) is on the network:
+        a device whose Person is them and whose Type is Phone or Wearable. Laptops and TVs don't count, as they stay
+        home when people leave. Phones go quiet on Wi-Fi while asleep, so someone only counts as away once all their
+        phones have been gone for
+        <select id="away-after" aria-label="Away after">
+          <option value="20">20 minutes</option><option value="30">30 minutes</option>
+          <option value="45">45 minutes</option><option value="60">1 hour</option>
+          <option value="90">1½ hours</option><option value="120">2 hours</option>
+        </select>.
+        A shorter time catches quick errands but may call a sleeping phone away.</p>
+      <div class="status" id="away-status"></div>
+    </section>
   </div>
 
   <div id="speed-view" hidden>
@@ -713,6 +750,7 @@ async function refresh() {
     if (reviewing) renderProgress();
     if (reviewWhenLoaded) { reviewWhenLoaded = false; startReview(); }
     loadSpeed();
+    loadPeople();
     if (detailMac) loadDetail();
     $("updated").textContent = saved
       ? "Offline: showing the list saved " + new Date(saved).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })
@@ -777,6 +815,7 @@ async function loadSettings() {
     renderSettings();
     if (detail && formMac !== detail.device.mac) renderDetail();  // the About form waits for the people list
     if (speed && location.hash === "#/speed") renderSpeed();  // the plan line and settings need them too
+    if (presenceData && location.hash === "#/people") renderPeople();
   } catch (e) { /* refresh() reports connectivity problems */ }
 }
 
@@ -898,10 +937,16 @@ function route() {
   reviewing = !!m && m[1] === "review";
   detail = null;
   formMac = null;
-  const speedPage = location.hash === "#/speed";
-  $("list-view").hidden = !!detailMac || speedPage;
+  const speedPage = location.hash === "#/speed", peoplePage = location.hash === "#/people";
+  $("list-view").hidden = !!detailMac || speedPage || peoplePage;
   $("detail-view").hidden = !detailMac;
   $("speed-view").hidden = !speedPage;
+  $("people-view").hidden = !peoplePage;
+  if (peoplePage) {
+    document.title = "Who's home · NetWatch";
+    window.scrollTo(0, 0);
+    return loadPeople();
+  }
   if (speedPage) {
     document.title = "Internet speed · NetWatch";
     window.scrollTo(0, 0);
@@ -1346,6 +1391,90 @@ function renderUsageLists() {
     ? usage.top.map((u) => useRow(u, `≈ ${bytes(u.down_mb + u.up_mb)}`, u.down_mb, u.up_mb, maxTop))
     : [el("div", { className: "empty", textContent: "Nothing recorded yet." })]));
 }
+
+// ---- who's home (#/people)
+let presenceData = null;
+
+async function loadPeople() {
+  const onPage = location.hash === "#/people";
+  try {
+    const r = await fetch(`/api/people?days=${onPage ? 7 : 1}`);
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || "HTTP " + r.status);
+    presenceData = data;
+    renderStrip();
+    if (location.hash === "#/people") renderPeople();
+  } catch (e) { if (onPage) showError("Couldn't load who's home: " + e.message); }
+}
+
+function when(ts) {
+  const d = new Date(ts * 1000), today = new Date();
+  if (d.toDateString() === today.toDateString()) return clock(ts);
+  return d.toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" });
+}
+
+function presenceText(p) {
+  if (p.home === null) return "no phone set";
+  if (p.home) return p.since ? "home since " + when(p.since) : "home";
+  return p.since ? "away since " + when(p.since) : "away";
+}
+
+function renderStrip() {
+  const strip = $("home-strip"), list = presenceData.people;
+  // Until someone's phone is set, the strip would only say "no phone set".
+  strip.hidden = !list.some((p) => p.home !== null);
+  strip.replaceChildren(...list.filter((p) => p.home !== null).map((p) => el("button", {
+    type: "button", className: "chip" + (p.home ? " home" : ""), title: "Who's home",
+    onclick: () => { location.hash = "#/people"; },
+  }, el("strong", { textContent: (p.home ? "🏠 " : "") + p.person }), " " + presenceText(p))));
+}
+
+function renderPeople() {
+  const { start, now, people } = presenceData;
+  const pct = (t) => (Math.min(Math.max(t, start), now) - start) / (now - start) * 100;
+  const days = [];
+  for (const d = new Date(start * 1000); d / 1000 < now; d.setDate(d.getDate() + 1)) {
+    d.setHours(0, 0, 0, 0);
+    if (d / 1000 >= start) days.push(d / 1000);
+  }
+  $("people-rows").replaceChildren(...people.map((p) => {
+    const track = el("div", { className: "tl-track" });
+    for (const [a, b] of p.spans) {
+      const s = el("div", { className: "tl-span", title: `Home ${when(a)} – ${b === now ? "now" : when(b)}` });
+      s.style.left = pct(a) + "%";
+      s.style.width = Math.max(pct(b) - pct(a), 0.2) + "%";
+      track.append(s);
+    }
+    for (const d of days) {
+      const tick = el("div", { className: "tl-tick" });
+      tick.style.left = pct(d) + "%";
+      track.append(tick);
+    }
+    const phones = p.devices.length
+      ? p.devices.map((d) => el("a", { href: "#/device/" + d.mac, textContent: d.name }))
+      : ["No phone set. Open their phone's page and set Person to them and Type to Phone."];
+    return el("div", { className: "person-row" },
+      el("div", { className: "person-head" },
+        el("strong", { textContent: (p.home ? "🏠 " : "") + p.person }),
+        el("span", { className: "sub", textContent: presenceText(p) })),
+      p.home === null ? null : track,
+      el("div", { className: "sub person-phones" }, ...phones.flatMap((x, i) => i ? [", ", x] : [x])));
+  }));
+  $("people-axis").replaceChildren(...days.map((d) => {
+    const s = el("span", { textContent: new Date(d * 1000).toLocaleDateString([], { weekday: "short" }) });
+    s.style.left = pct(d) + "%";
+    return s;
+  }));
+  if (settings && document.activeElement !== $("away-after")) $("away-after").value = String(settings.away_after);
+}
+
+$("away-after").onchange = async () => {
+  try {
+    settings = await post("/api/settings", { away_after: Number($("away-after").value) });
+    $("away-status").textContent = "Saved ✓";
+    loadPeople();
+  } catch (e) { $("away-status").textContent = "Not saved: " + e.message; }
+};
 
 // ---- internet speed (#/speed)
 let speedDays = 7, speed = null, speedWait = null;
