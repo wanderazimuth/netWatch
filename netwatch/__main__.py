@@ -193,7 +193,7 @@ def main() -> None:
     sub.add_parser("run", help="scan forever (what the systemd service runs)").set_defaults(func=cmd_run)
     sub.add_parser("scan", help="scan once and print devices").set_defaults(func=cmd_scan)
     sub.add_parser("devices", help="list known devices").set_defaults(func=cmd_devices)
-    sub.add_parser("portscan", help="port scan online devices and alert on new open ports (weekly timer)"
+    sub.add_parser("portscan", help="port scan online devices and alert on new open ports (daily timer)"
                    ).set_defaults(func=cmd_portscan)
     p = sub.add_parser("speedtest", help="hourly internet speed test, put off while the internet is busy (timer)")
     p.add_argument("--now", action="store_true", help="test now, even if busy or already tested this hour")

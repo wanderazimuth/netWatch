@@ -448,7 +448,7 @@
       <label class="row"><input type="checkbox" data-s="down_alerts">
         <span>🚨 Offline alerts<div class="hint">A device you've set a 🚨 time on hasn't answered for that long, and again when it's back. Sent at high priority. <span id="down-count"></span></div></span></label>
       <label class="row"><input type="checkbox" data-s="port_alerts">
-        <span>New open ports<div class="hint">The weekly port scan finds a device accepting connections on a port it never had open before.</div></span></label>
+        <span>New open ports<div class="hint">The daily port scan finds a device accepting connections on a port it never had open before.</div></span></label>
       <label class="row"><input type="checkbox" data-s="security_alerts">
         <span>🛡️ Network security<div class="hint">Something posing as the router, two devices on one IP, or a second DHCP server. Sent at high priority. <a href="#/security" class="sec-link">See the checks</a></div></span></label>
     </div>
@@ -1272,7 +1272,7 @@ $("merge-dlg").onclick = (e) => { if (e.target === $("merge-dlg")) $("merge-dlg"
 
 function renderPorts(ports, scanned) {
   const note = (text) => el("div", { className: "hint", style: "margin-top:10px", textContent: text });
-  const schedule = "NetWatch scans the 1,000 most common TCP ports on every online device each Sunday morning.";
+  const schedule = "NetWatch scans the 1,000 most common TCP ports on every online device each morning.";
   if (!scanned) return $("d-ports").replaceChildren(el("div", { className: "empty", textContent: "Not scanned yet." }), note(schedule));
   const open = ports.filter((p) => p.open), closed = ports.filter((p) => !p.open);
   const row = (p) => el("div", { className: "port-row" + (p.open ? "" : " closed") },

@@ -13,13 +13,17 @@ fi
 
 id netwatch &>/dev/null || useradd --system --no-create-home --shell /usr/sbin/nologin netwatch
 
-# nmap: the weekly port scan.
+# nmap: the daily port scan.
 apt-get install -y --no-install-recommends python3-venv nmap
 
-# Ookla's Speedtest CLI: the hourly speed test. One static program, pinned and checked;
-# its license is accepted by the --accept-license flag NetWatch runs it with.
-SPEEDTEST_URL=https://install.speedtest.net/app/cli/ookla-speedtest-1.2.0-linux-aarch64.tgz
-SPEEDTEST_SHA256=3953d231da3783e2bf8904b6dd72767c5c6e533e163d3742fd0437affa431bd3
+# Ookla's Speedtest CLI: the hourly speed test. One static program, pinned and checked, built for
+# this machine; its license is accepted by the --accept-license flag NetWatch runs it with.
+case $(uname -m) in
+    aarch64) SPEEDTEST_ARCH=aarch64 SPEEDTEST_SHA256=3953d231da3783e2bf8904b6dd72767c5c6e533e163d3742fd0437affa431bd3 ;;
+    x86_64)  SPEEDTEST_ARCH=x86_64  SPEEDTEST_SHA256=5690596c54ff9bed63fa3732f818a05dbc2db19ad36ed68f21ca5f64d5cfeeb7 ;;
+    *) echo "no Speedtest CLI pinned for $(uname -m)" >&2; exit 1 ;;
+esac
+SPEEDTEST_URL=https://install.speedtest.net/app/cli/ookla-speedtest-1.2.0-linux-$SPEEDTEST_ARCH.tgz
 if [[ ! -x /usr/local/bin/speedtest ]]; then
     tmp=$(mktemp -d)
     curl -fsSL -o "$tmp/speedtest.tgz" "$SPEEDTEST_URL"

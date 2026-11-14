@@ -135,7 +135,7 @@ What gets pushed is controlled from the dashboard's **Alerts** button, no SSH ne
   isn't seen for that long you get one high-priority alert, then another when it's
   back. Meant for always-on devices like the NAS or cameras; devices that are down
   show a red dot on the dashboard
-- **New open ports** found by the weekly port scan (below)
+- **New open ports** found by the daily port scan (below)
 - **Network security** problems (below), at high priority
 - **Snooze** for 1 / 8 / 24 hours
 - **Quiet hours** -- deliver silently, or don't send at all
@@ -177,9 +177,9 @@ Each problem alerts once, and again only if it went away for a day and came back
 replace the router, or set up a second DHCP server on purpose, tap **It's my new router** or
 **I set this up** on the Security page and it stops alerting.
 
-## Weekly port scan
+## Daily port scan
 
-Every Sunday around 10:00 a systemd timer runs `netwatch portscan`, which
+Every day around 10:00 a systemd timer runs `netwatch portscan`, which
 TCP-scans nmap's 1,000 most common ports on every device that's online. Each
 device's page lists its open ports. The first scan of a device just records
 what's open; after that you get an alert when a device opens a port it has

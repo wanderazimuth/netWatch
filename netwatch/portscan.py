@@ -1,4 +1,4 @@
-"""Weekly port scan: nmap every online device and alert when one opens a port
+"""Daily port scan: nmap every online device and alert when one opens a port
 it has never had open before.
 
 A device's first scan only records what's open (its baseline). Ports are
