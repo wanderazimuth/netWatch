@@ -8,7 +8,7 @@ import time
 from datetime import datetime
 
 from . import config as config_mod
-from . import db, notify, pause, portscan, scanner, security, speed, tracker, usage
+from . import db, notify, pause, portscan, scanner, schedule, security, speed, tracker, usage
 from . import deco as deco_mod
 from . import settings as settings_mod
 from .deco import Deco
@@ -68,15 +68,18 @@ def scan_once(cfg: config_mod.Config, conn, deco: Deco | None = None) -> list[tr
 
 
 def maintain_pauses(cfg: config_mod.Config, conn) -> None:
-    """End expired pauses and follow paused devices to new IPs."""
-    if cfg.pihole is None or not pause.needs_maintenance(conn, int(time.time())):
+    """End expired pauses, follow paused devices to new IPs, and start and end scheduled pauses."""
+    if cfg.pihole is None:
         return
+    session = lambda: PiholeClient(cfg.pihole.url, cfg.pihole.password, timeout=15).admin()
+    changed = False
     try:
-        with PiholeClient(cfg.pihole.url, cfg.pihole.password, timeout=15).admin() as admin:
-            changed = pause.maintain(conn, admin, int(time.time()))
+        if pause.needs_maintenance(conn, int(time.time())):
+            with session() as admin:
+                changed = pause.maintain(conn, admin, int(time.time()))
+        changed = schedule.run(conn, session, int(time.time()), frozenset(cfg.pihole.pausable)) or changed
     except Exception:
         log.warning("updating paused devices in Pi-hole failed; will retry", exc_info=True)
-        return
     if changed:
         pause.touch(cfg.pihole.sync_trigger)
 

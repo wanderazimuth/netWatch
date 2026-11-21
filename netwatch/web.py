@@ -6,10 +6,12 @@ LAN: there is no login, and anyone who can reach the port can relabel devices.
 
 from __future__ import annotations
 
+import hmac
 import json
 import logging
 import os
 import re
+import threading
 import time
 from collections import Counter
 from typing import TYPE_CHECKING
@@ -20,6 +22,7 @@ from urllib.parse import parse_qs, urlparse
 from . import db, inventory, notify, tracker
 from . import pause as pause_mod
 from . import presence
+from . import schedule as schedule_mod
 from . import security as security_mod
 from . import settings as settings_mod
 from . import speed as speed_mod
@@ -34,8 +37,13 @@ log = logging.getLogger(__name__)
 
 MAC = re.compile(r"[0-9a-f]{2}(?::[0-9a-f]{2}){5}")
 IPV4 = re.compile(r"(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)")
-DEVICE_PATH = re.compile(r"/api/devices/([0-9a-f]{2}(?::[0-9a-f]{2}){5})/(label|notify|down_after|pause|resume|review|merge)")
+DEVICE_PATH = re.compile(
+    r"/api/devices/([0-9a-f]{2}(?::[0-9a-f]{2}){5})/(label|notify|down_after|pause|resume|review|merge|pausable)")
+SCHEDULE_PATH = re.compile(r"/api/schedules(?:/(\d+)(?:/(skip|delete))?)?")
 MAX_PAUSE = 7 * 86400
+# Wrong PINs in a row before the PIN stops working for a while, so it can't be guessed.
+PIN_TRIES, PIN_LOCKOUT = 5, 15 * 60
+PIN_HEADER = "X-NetWatch-PIN"
 TOP_USERS = 15
 DEVICE_INFO_PATH = re.compile(r"/api/devices/([0-9a-f]{2}(?::[0-9a-f]{2}){5})(/dns)?")
 MAX_HISTORY = 31 * 86400
@@ -69,7 +77,11 @@ def device_json(r, pausable: frozenset[str] = frozenset(), gateway: str | None =
         "down": r["down_since"] is not None,
         "paused": r["paused_ip"] is not None,
         "paused_until": r["paused_until"],
+        "paused_by": r["paused_by"],
         "pausable": can_pause(r, pausable, gateway),
+        "pause_allowed": bool(r["pause_allowed"]),
+        "pause_listed": r["mac"] in pausable,
+        "router": gateway is not None and r["ip"] == gateway,
         "randomized": is_randomized_mac(r["mac"]),
         "status": r["status"] or "review",
         "reviewed": r["reviewed"],
@@ -82,9 +94,9 @@ def device_json(r, pausable: frozenset[str] = frozenset(), gateway: str | None =
 
 
 def can_pause(r, pausable: frozenset[str], gateway: str | None = None) -> bool:
-    """Devices listed in config, and ones still to review: they aren't known to be yours yet,
-    and pausing one is a way to find out what it is. Never the router, though."""
-    return r["mac"] in pausable or (r["status"] is None and r["ip"] != gateway)
+    """Devices listed in config or allowed with the PIN, and ones still to review: they aren't known
+    to be yours yet, and pausing one is a way to find out what it is. Never the router, though."""
+    return pause_mod.allowed(r, pausable) or (r["status"] is None and r["ip"] != gateway)
 
 
 def devices_json(conn, pausable: frozenset[str] = frozenset(), gateway: str | None = None) -> list[dict]:
@@ -163,6 +175,9 @@ def make_handler(db_path: str, ntfy_url: str = "", dashboard_url: str = "",
     static = resources.files("netwatch").joinpath("static")
     index_html = static.joinpath("index.html").read_bytes()
     pausable = frozenset(pihole.pausable) if pihole is not None else frozenset()
+    pin = pihole.pin if pihole is not None else ""
+    pin_state = {"fails": 0, "locked_until": 0}
+    pin_lock = threading.Lock()
     gateway = default_gateway()
     favicon = static.joinpath("favicon.svg").read_bytes()
     # What makes the page an installable app: the manifest, its icons and the offline service worker.
@@ -223,6 +238,12 @@ def make_handler(db_path: str, ntfy_url: str = "", dashboard_url: str = "",
                     return self._json(self._security(conn))
                 finally:
                     conn.close()
+            if url.path == "/api/pausing":
+                conn = db.connect(db_path)
+                try:
+                    return self._json(self._pausing(conn))
+                finally:
+                    conn.close()
             m = DEVICE_INFO_PATH.fullmatch(url.path)
             if m:
                 return self._device(m.group(1), parse_qs(url.query)) if not m.group(2) else self._dns(m.group(1))
@@ -243,6 +264,8 @@ def make_handler(db_path: str, ntfy_url: str = "", dashboard_url: str = "",
                 return self._json({
                     "now": now,
                     "device": device_json(row, pausable, gateway),
+                    "schedules": [schedule_mod.to_json(conn, x, now, pausable)
+                                  for x in schedule_mod.for_device(conn, row)],
                     "history": online_spans(conn, mac, since, now, offline_after),
                     "events": events_json(conn, 100, mac),
                     "ports_scanned": row["ports_scanned"],
@@ -373,6 +396,10 @@ def make_handler(db_path: str, ntfy_url: str = "", dashboard_url: str = "",
                 updates = inventory.clean(body, settings_mod.load(conn)["people"], row["person"])
             except ValueError as e:
                 return self._json({"error": str(e)}, 400)
+            # Moving a pausable device to someone else takes it out of its person's schedules.
+            if ("person" in updates and updates["person"] != row["person"] and pause_mod.allowed(row, pausable)
+                    and not self._pin_ok()):
+                return
             if updates:
                 # Column names come from inventory.clean, never from the request.
                 conn.execute(f"UPDATE devices SET {', '.join(k + ' = ?' for k in updates)} WHERE mac = ?",
@@ -385,6 +412,10 @@ def make_handler(db_path: str, ntfy_url: str = "", dashboard_url: str = "",
             old = body.get("from")
             if not (isinstance(old, str) and MAC.fullmatch(old)):
                 return self._json({"error": "from must be the old device's MAC address"}, 400)
+            # Merging a pausable device away would leave it as a new device its schedules don't know.
+            old_row = conn.execute("SELECT * FROM devices WHERE mac = ?", (old,)).fetchone()
+            if old_row is not None and pause_mod.allowed(old_row, pausable) and not self._pin_ok():
+                return
             try:
                 inventory.merge(conn, old, mac)
             except LookupError:
@@ -394,32 +425,96 @@ def make_handler(db_path: str, ntfy_url: str = "", dashboard_url: str = "",
             row = conn.execute("SELECT * FROM devices WHERE mac = ?", (mac,)).fetchone()
             return self._json({"ok": True, "device": device_json(row, pausable, gateway)})
 
-        def _pause(self, conn, mac: str, action: str, body: dict):
-            if pihole is None:
-                return self._json({"error": "Pi-hole isn't set up in config.toml"}, 409)
-            # Resuming only puts things back, so it's always allowed.
-            row = conn.execute("SELECT * FROM devices WHERE mac = ?", (mac,)).fetchone()
-            if action == "pause" and row is not None and not can_pause(row, pausable, gateway):
-                return self._json({"error": "only devices still to review, or in the pausable list in config.toml, can be paused"}, 403)
+        def _pin_ok(self, setup: bool = False) -> bool:
+            """Check the request's PIN. Sends the refusal and returns False if it can't go ahead.
+
+            With no PIN in config.toml, the things it guards are open (setup=False), or off (setup=True:
+            they're new, and only make sense with a PIN).
+            """
+            if not pin:
+                if setup:
+                    self._json({"error": "set a pin under [pihole] in /etc/netwatch/config.toml first"}, 409)
+                    return False
+                return True
+            now = time.time()
+            given = self.headers.get(PIN_HEADER, "")
+            locked = False
+            with pin_lock:
+                if pin_state["locked_until"] > now:
+                    self._json({"error": "too many wrong PINs: try again in "
+                                f"{int(pin_state['locked_until'] - now) // 60 + 1} min"}, 429)
+                    return False
+                if given and hmac.compare_digest(given.encode(), pin.encode()):
+                    pin_state["fails"] = 0
+                    return True
+                if given:
+                    pin_state["fails"] += 1
+                    if pin_state["fails"] >= PIN_TRIES:
+                        pin_state.update(fails=0, locked_until=now + PIN_LOCKOUT)
+                        locked = True
+            if locked:
+                log.warning("%d wrong PINs in a row; PIN locked for %d min", PIN_TRIES, PIN_LOCKOUT // 60)
+                if ntfy_url:
+                    try:
+                        notify.push(ntfy_url, "NetWatch: wrong PIN", f"Someone entered a wrong PIN {PIN_TRIES} times "
+                                    f"in a row. Pausing changes are locked for {PIN_LOCKOUT // 60} minutes.",
+                                    priority="high", tags="lock", click=dashboard_url)
+                    except Exception:
+                        log.warning("PIN alert failed", exc_info=True)
+            self._json({"error": "wrong PIN" if given else "PIN needed", "pin": True}, 401)
+            return False
+
+        def _admin(self):
+            return PiholeClient(pihole.url, pihole.password, timeout=15).admin()
+
+        def _until(self, body: dict) -> tuple[bool, int | None]:
+            """The end time a pause request asks for: (ok, until). Sends the refusal if it's bad."""
             until, now = body.get("until"), int(time.time())
             # An alert's Pause button sends minutes, so it counts from the tap, not from when the alert went out.
             minutes = body.get("minutes")
-            if action == "pause" and minutes is not None:
+            if minutes is not None:
                 if not (isinstance(minutes, int) and not isinstance(minutes, bool) and 0 < minutes <= MAX_PAUSE // 60):
-                    return self._json({"error": "minutes must be 1 to 7 days' worth"}, 400)
+                    self._json({"error": "minutes must be 1 to 7 days' worth"}, 400)
+                    return False, None
                 until = now + minutes * 60
-            if action == "pause" and until is not None and not (
+            if until is not None and not (
                 isinstance(until, int) and not isinstance(until, bool) and now < until <= now + MAX_PAUSE
             ):
-                return self._json({"error": "until must be a future unix time within 7 days, or null"}, 400)
+                self._json({"error": "until must be a future unix time within 7 days, or null"}, 400)
+                return False, None
+            return True, until
+
+        def _resume(self, conn, admin, row) -> None:
+            """Resume by hand. If one of its schedules is running, it stays unpaused until that window ends."""
+            pause_mod.resume(conn, admin, row["mac"])
+            end = schedule_mod.running_for(conn, row, int(time.time()))
+            if end:
+                conn.execute("UPDATE devices SET sched_skip_until = ? WHERE mac = ?", (end, row["mac"]))
+                conn.commit()
+
+        def _pause(self, conn, mac: str, action: str, body: dict):
+            if pihole is None:
+                return self._json({"error": "Pi-hole isn't set up in config.toml"}, 409)
+            row = conn.execute("SELECT * FROM devices WHERE mac = ?", (mac,)).fetchone()
+            if row is None:
+                return self._json({"error": "unknown device"}, 404)
+            if action == "pause" and not can_pause(row, pausable, gateway):
+                return self._json({"error": "only devices still to review, or allowed to be paused, can be paused"}, 403)
+            # Resuming only puts things back, so it's never refused -- but it does take the PIN once
+            # there is one, or whoever a pause is meant for could just resume it.
+            if action == "resume" and not self._pin_ok():
+                return
+            until = None
+            if action == "pause":
+                ok, until = self._until(body)
+                if not ok:
+                    return
             try:
-                with PiholeClient(pihole.url, pihole.password, timeout=15).admin() as admin:
+                with self._admin() as admin:
                     if action == "pause":
                         pause_mod.pause(conn, admin, mac, until)
                     else:
-                        pause_mod.resume(conn, admin, mac)
-            except LookupError:
-                return self._json({"error": "unknown device"}, 404)
+                        self._resume(conn, admin, row)
             except ValueError as e:
                 return self._json({"error": str(e)}, 409)
             except Exception as e:
@@ -428,6 +523,100 @@ def make_handler(db_path: str, ntfy_url: str = "", dashboard_url: str = "",
             pause_mod.touch(pihole.sync_trigger)
             row = conn.execute("SELECT * FROM devices WHERE mac = ?", (mac,)).fetchone()
             return self._json({"ok": True, "device": device_json(row, pausable, gateway)})
+
+        def _pause_person(self, conn, action: str, body: dict):
+            """Pause, or resume, all of a person's devices that can be paused."""
+            if pihole is None:
+                return self._json({"error": "Pi-hole isn't set up in config.toml"}, 409)
+            person = body.get("person")
+            if not isinstance(person, str):
+                return self._json({"error": "person must be a name"}, 400)
+            rows = conn.execute("SELECT * FROM devices WHERE person = ?", (person,)).fetchall()
+            until = None
+            if action == "pause":
+                rows = [r for r in rows if pause_mod.allowed(r, pausable) and r["ip"]]
+                if not rows:
+                    return self._json({"error": f"none of {person}'s devices can be paused"}, 409)
+                ok, until = self._until(body)
+                if not ok:
+                    return
+            else:
+                if not self._pin_ok():
+                    return
+                rows = [r for r in rows if r["paused_ip"]]
+            try:
+                if rows:
+                    with self._admin() as admin:
+                        for r in rows:
+                            if action == "pause":
+                                pause_mod.pause(conn, admin, r["mac"], until)
+                            else:
+                                self._resume(conn, admin, r)
+            except Exception as e:
+                log.warning("Pi-hole %s for %s failed", action, person, exc_info=True)
+                return self._json({"error": f"Pi-hole {action} failed: {e}"}, 502)
+            pause_mod.touch(pihole.sync_trigger)
+            return self._json({"ok": True, "count": len(rows)})
+
+        def _apply_schedules(self, conn) -> str | None:
+            """Start or end scheduled pauses now, after a change, rather than at the next scan."""
+            try:
+                if schedule_mod.run(conn, self._admin, int(time.time()), pausable):
+                    pause_mod.touch(pihole.sync_trigger)
+            except Exception:
+                log.warning("applying pause schedules failed", exc_info=True)
+                return "Saved, but Pi-hole couldn't be reached: it takes effect within a minute or two."
+            return None
+
+        def _set_pausable(self, conn, mac: str, body: dict):
+            if pihole is None:
+                return self._json({"error": "Pi-hole isn't set up in config.toml"}, 409)
+            if not isinstance(body.get("allowed"), bool):
+                return self._json({"error": "allowed must be true or false"}, 400)
+            row = conn.execute("SELECT * FROM devices WHERE mac = ?", (mac,)).fetchone()
+            if row is None:
+                return self._json({"error": "unknown device"}, 404)
+            if body["allowed"] and gateway is not None and row["ip"] == gateway:
+                return self._json({"error": "the router can't be paused"}, 403)
+            if not self._pin_ok(setup=True):
+                return
+            conn.execute("UPDATE devices SET pause_allowed = ? WHERE mac = ?", (1 if body["allowed"] else None, mac))
+            conn.commit()
+            warning = self._apply_schedules(conn)
+            row = conn.execute("SELECT * FROM devices WHERE mac = ?", (mac,)).fetchone()
+            return self._json({"ok": True, "warning": warning, "device": device_json(row, pausable, gateway)})
+
+        def _schedules(self, conn, sid: str | None, action: str | None, body: dict):
+            if pihole is None:
+                return self._json({"error": "Pi-hole isn't set up in config.toml"}, 409)
+            if not self._pin_ok(setup=True):
+                return
+            try:
+                if action == "delete":
+                    schedule_mod.delete(conn, int(sid))
+                elif action == "skip":
+                    if not isinstance(body.get("skip"), bool):
+                        return self._json({"error": "skip must be true or false"}, 400)
+                    schedule_mod.skip(conn, int(sid), int(time.time()), body["skip"])
+                else:
+                    cols = schedule_mod.clean(body, settings_mod.load(conn)["people"], conn)
+                    schedule_mod.save(conn, int(sid) if sid else None, cols)
+            except LookupError as e:
+                return self._json({"error": str(e)}, 404)
+            except ValueError as e:
+                return self._json({"error": str(e)}, 400)
+            warning = self._apply_schedules(conn)
+            return self._json({"ok": True, "warning": warning, **self._pausing(conn)})
+
+        def _pausing(self, conn) -> dict:
+            """The Pausing page: the devices that can be paused (or are), and the schedules."""
+            now = int(time.time())
+            rows = [r for r in conn.execute("SELECT * FROM devices").fetchall()
+                    if pause_mod.allowed(r, pausable) or r["paused_ip"]]
+            return {"now": now, "pihole_configured": pihole is not None, "pin_set": bool(pin),
+                    "people": settings_mod.load(conn)["people"],
+                    "devices": [device_json(r, pausable, gateway) for r in rows],
+                    "schedules": schedule_mod.all_json(conn, now, pausable)}
 
         def do_POST(self):
             path = urlparse(self.path).path
@@ -471,6 +660,13 @@ def make_handler(db_path: str, ntfy_url: str = "", dashboard_url: str = "",
                 if path == "/api/security/trust":
                     return self._trust(conn, body)
 
+                if path in ("/api/people/pause", "/api/people/resume"):
+                    return self._pause_person(conn, path.rsplit("/", 1)[1], body)
+
+                m = SCHEDULE_PATH.fullmatch(path)
+                if m:
+                    return self._schedules(conn, *m.groups(), body)
+
                 m = DEVICE_PATH.fullmatch(path)
                 if not m:
                     return self._json({"error": "not found"}, 404)
@@ -481,6 +677,8 @@ def make_handler(db_path: str, ntfy_url: str = "", dashboard_url: str = "",
                     return self._review(conn, mac, body)
                 if field == "merge":
                     return self._merge(conn, mac, body)
+                if field == "pausable":
+                    return self._set_pausable(conn, mac, body)
                 if field == "label":
                     value = (body.get("label") or "").strip()[:64] or None
                     cur = conn.execute("UPDATE devices SET label = ? WHERE mac = ?", (value, mac))

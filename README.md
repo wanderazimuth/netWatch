@@ -23,6 +23,7 @@ netwatch/
   usage.py     each device's internet use, from the Deco's live speeds
   presence.py  who's home, from each person's phones
   security.py  router impersonation, IP conflicts, rogue DHCP servers
+  schedule.py  pause schedules: a device or a person's devices, at set times each week
   web.py       dashboard server (stdlib only) + JSON API
   static/      dashboard page
   __main__.py  CLI: run | scan | devices | portscan | speedtest | events | label | web
@@ -88,12 +89,27 @@ The old entry is removed; if the old MAC ever comes back, it shows up as a new d
 The device page's **Pause internet** button blocks every DNS lookup from that
 device through Pi-hole, for 30 min / 1 h / 2 h / until 7:00 / until you resume.
 
-The button only appears on devices listed by MAC in `pausable` in the
-`[pihole]` config section, and on devices still to review (except the router):
-they aren't known to be yours yet, and pausing one for a while is a way to find
-out what it is. The server refuses to pause anything else. Since anyone on the
-LAN can use the dashboard, this keeps them from pausing your own devices, the Pi
-or the router once you've reviewed them. Resume always works.
+The button appears on devices you've allowed to be paused, and on devices still to review (except
+the router): they aren't known to be yours yet, and pausing one for a while is a way to find out
+what it is. The server refuses to pause anything else. A device is allowed if it's listed by MAC in
+`pausable` in the `[pihole]` config section, or if you choose **Allow pausing** on its page.
+
+**The PIN.** Set `pin` in the `[pihole]` section. Anyone on the LAN can use the dashboard, so these
+take the PIN: allowing a device to be paused (or stopping it), adding or changing schedules,
+resuming a paused device early, moving a pausable device to another person, and merging one away
+with "Same device as…". Pausing doesn't. The browser can remember the PIN ("Forget the PIN on this
+device" on the Pausing page). Five wrong PINs in a row lock it for 15 minutes and send an alert.
+Without a PIN, Allow pausing and schedules are off, and resuming works without one, as before.
+
+**The Pausing page** (⏸ in the header) lists the devices that can be paused, grouped by person,
+with **Pause all** / **Resume all** for each person.
+
+**Schedules** pause a device, or every pausable device of a person, at set times on chosen days:
+say Sun–Thu 9 PM to 7 AM (an end before the start means the next morning). The scanner starts and
+ends them within a minute, by the server's clock; saving a schedule applies it at once. A person's
+schedule covers devices they're given later too. **Skip next** (or **Stop this one** while it's
+running) leaves out one window. A device resumed early stays unpaused until the window ends. A
+longer pause by hand is left alone; a shorter one is stretched to the window's end.
 NetWatch creates a Pi-hole group, "NetWatch paused", with a block-everything
 regex rule (`.*`), and points a client entry for the device's IP at it. Resume
 puts back whatever client entry that IP had before. Timed pauses end on their

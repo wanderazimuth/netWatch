@@ -48,9 +48,12 @@ db_path = "/var/lib/netwatch/netwatch.db"
 # If you copy Pi-hole settings to a second Pi-hole (e.g. nebula-sync), NetWatch
 # can touch this file after pausing/resuming so a systemd path unit syncs at once.
 # sync_trigger = "/var/lib/netwatch/pihole-changed"
-# The only devices the dashboard's "Pause internet" button works on, by MAC.
-# Anyone on the LAN can use the dashboard, so list just the devices you're happy
-# for them to pause. Empty (the default) turns pausing off.
+# Devices the dashboard's "Pause internet" button always works on, by MAC. More
+# can be allowed on the dashboard with the PIN below. Anyone on the LAN can use
+# the dashboard, so only allow devices you're happy for them to pause.
 # pausable = [
 #   "aa:bb:cc:dd:ee:01",  # kid's tablet
 # ]
+# The PIN for allowing more devices to be paused from the dashboard, pause
+# schedules, and resuming a paused device early. Empty turns those off.
+# pin = "2580"

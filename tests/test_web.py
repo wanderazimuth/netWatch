@@ -6,11 +6,15 @@ import unittest
 import urllib.error
 import urllib.request
 from http.server import ThreadingHTTPServer
+from contextlib import contextmanager
 from types import SimpleNamespace
+from unittest import mock
 
 from netwatch import db, web
 from netwatch.scanner import Sighting
 from netwatch.tracker import apply_scan
+
+from test_pause import FakeAdmin
 
 TV = "00:11:22:33:44:55"
 OTHER = "00:11:22:33:44:66"
@@ -278,7 +282,7 @@ class WebTest(unittest.TestCase):
 
     def test_only_pausable_devices_can_be_paused(self):
         # A Pi-hole nobody listens on: a listed device gets past the check and then fails to connect.
-        pihole = SimpleNamespace(url="http://127.0.0.1:9", password="", sync_trigger="", pausable=[TV])
+        pihole = SimpleNamespace(url="http://127.0.0.1:9", password="", sync_trigger="", pausable=[TV], pin="")
         server = ThreadingHTTPServer(("127.0.0.1", 0), web.make_handler(self.db_path, pihole=pihole))
         threading.Thread(target=server.serve_forever, daemon=True).start()
         self.addCleanup(server.server_close)
@@ -330,12 +334,149 @@ class PausableTest(unittest.TestCase):
         self.assertIsNone(web.default_gateway(path + ".missing"))
 
     def test_rules(self):
-        row = lambda mac, ip, status: {"mac": mac, "ip": ip, "status": status}
+        row = lambda mac, ip, status, allowed=None: {"mac": mac, "ip": ip, "status": status, "pause_allowed": allowed}
         listed = frozenset([TV])
         self.assertTrue(web.can_pause(row(TV, "192.168.0.20", "known"), listed))  # in config
         self.assertTrue(web.can_pause(row(OTHER, "192.168.0.30", None), listed, "192.168.0.1"))  # to review
         self.assertFalse(web.can_pause(row(OTHER, "192.168.0.30", "guest"), listed))
         self.assertFalse(web.can_pause(row(OTHER, "192.168.0.1", None), listed, "192.168.0.1"))  # the router
+
+
+class FakeClient:
+    """Stands in for PiholeClient: admin() hands out one shared FakeAdmin."""
+    admin_state = None
+
+    def __init__(self, *args, **kwargs):
+        pass
+
+    @contextmanager
+    def admin(self):
+        yield FakeClient.admin_state
+
+
+class PinTest(unittest.TestCase):
+    """Allowing pausing, schedules, early resume and pausing by person, with a PIN in config."""
+
+    def setUp(self):
+        fd, self.db_path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        self.addCleanup(self.remove_db)  # cleanups run last-first: after the servers have stopped
+        conn = db.connect(self.db_path)
+        apply_scan(conn, [Sighting(TV, "192.168.0.20"), Sighting(OTHER, "192.168.0.30")], 1000, 600)
+        conn.execute("UPDATE devices SET status = 'known', person = 'Fenly'")
+        conn.commit()
+        conn.close()
+        FakeClient.admin_state = FakeAdmin()
+        patcher = mock.patch.object(web, "PiholeClient", FakeClient)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.pin = "2468"
+        self.start(SimpleNamespace(url="", password="", sync_trigger="", pausable=[], pin=self.pin))
+
+    def start(self, pihole):
+        server = ThreadingHTTPServer(("127.0.0.1", 0), web.make_handler(self.db_path, pihole=pihole))
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        self.base = f"http://127.0.0.1:{server.server_port}"
+
+    def remove_db(self):
+        for suffix in ("", "-wal", "-shm"):
+            try:
+                os.remove(self.db_path + suffix)
+            except FileNotFoundError:
+                pass
+
+    def post(self, path, body, pin=None):
+        req = urllib.request.Request(self.base + path, data=json.dumps(body).encode(), method="POST")
+        req.add_header("Content-Type", "application/json")
+        if pin is not None:
+            req.add_header(web.PIN_HEADER, pin)
+        try:
+            with urllib.request.urlopen(req) as r:
+                return r.status, json.loads(r.read())
+        except urllib.error.HTTPError as e:
+            with e:
+                return e.code, json.loads(e.read())
+
+    def get(self, path):
+        with urllib.request.urlopen(self.base + path) as r:
+            return json.loads(r.read())
+
+    def device(self, mac):
+        return next(d for d in self.get("/api/devices")["devices"] if d["mac"] == mac)
+
+    def test_allow_pausing_needs_pin(self):
+        status, body = self.post(f"/api/devices/{TV}/pausable", {"allowed": True})
+        self.assertEqual((status, body["pin"]), (401, True))
+        self.assertEqual(self.post(f"/api/devices/{TV}/pause", {"until": None})[0], 403)
+        self.assertEqual(self.post(f"/api/devices/{TV}/pausable", {"allowed": True}, "1111")[0], 401)
+        self.assertEqual(self.post(f"/api/devices/{TV}/pausable", {"allowed": True}, self.pin)[0], 200)
+        self.assertTrue(self.device(TV)["pausable"])
+        # Pausing needs no PIN; resuming early does.
+        self.assertEqual(self.post(f"/api/devices/{TV}/pause", {"minutes": 30})[0], 200)
+        self.assertEqual(list(FakeClient.admin_state.clients), ["192.168.0.20"])
+        self.assertEqual(self.post(f"/api/devices/{TV}/resume", {})[0], 401)
+        self.assertEqual(self.post(f"/api/devices/{TV}/resume", {}, self.pin)[0], 200)
+        self.assertEqual(FakeClient.admin_state.clients, {})
+        # So does moving it to someone else, or merging it away.
+        self.assertEqual(self.post(f"/api/devices/{TV}/review", {"person": None})[0], 401)
+        self.assertEqual(self.post(f"/api/devices/{TV}/review", {"notes": "Fenly's tablet"})[0], 200)
+        self.assertEqual(self.post(f"/api/devices/{OTHER}/merge", {"from": TV})[0], 401)
+        self.assertEqual(self.post(f"/api/devices/{TV}/pausable", {"allowed": False}, self.pin)[0], 200)
+        self.assertFalse(self.device(TV)["pausable"])
+
+    def test_wrong_pins_lock_it(self):
+        for _ in range(web.PIN_TRIES):
+            self.assertEqual(self.post(f"/api/devices/{TV}/pausable", {"allowed": True}, "0000")[0], 401)
+        self.assertEqual(self.post(f"/api/devices/{TV}/pausable", {"allowed": True}, self.pin)[0], 429)
+
+    def test_schedules(self):
+        sched = {"person": "Fenly", "days": [0, 1, 2, 3, 4, 5, 6], "start": "00:00", "end": "23:59"}
+        self.assertEqual(self.post("/api/schedules", sched)[0], 401)
+        self.assertEqual(self.post("/api/schedules", {**sched, "person": "Nobody"}, self.pin)[0], 400)
+        # Nothing Fenly has can be paused yet, so the schedule has nothing to do.
+        status, body = self.post("/api/schedules", sched, self.pin)
+        self.assertEqual(status, 200)
+        self.assertEqual([d["pausable"] for d in body["schedules"][0]["devices"]], [False, False])
+        self.assertEqual(FakeClient.admin_state.clients, {})
+        # Allowing a device applies a running schedule straight away.
+        self.post(f"/api/devices/{TV}/pausable", {"allowed": True}, self.pin)
+        self.assertEqual(self.device(TV)["paused_by"], body["schedules"][0]["id"])
+        sid = body["schedules"][0]["id"]
+        detail = self.get(f"/api/devices/{TV}")
+        self.assertEqual([s["id"] for s in detail["schedules"]], [sid])
+        # Resumed early, it stays resumed until the window ends.
+        self.post(f"/api/devices/{TV}/resume", {}, self.pin)
+        self.post(f"/api/schedules/{sid}", {**sched, "end": "23:58"}, self.pin)
+        self.assertFalse(self.device(TV)["paused"])
+        self.assertEqual(self.post(f"/api/schedules/{sid}/skip", {"skip": "yes"}, self.pin)[0], 400)
+        self.assertEqual(self.post(f"/api/schedules/{sid}/skip", {"skip": True}, self.pin)[0], 200)
+        self.assertEqual(self.post(f"/api/schedules/{sid}/delete", {}, self.pin)[0], 200)
+        self.assertEqual(self.post(f"/api/schedules/{sid}/delete", {}, self.pin)[0], 404)
+        self.assertEqual(self.get("/api/pausing")["schedules"], [])
+
+    def test_pause_person(self):
+        self.assertEqual(self.post("/api/people/pause", {"person": "Fenly", "minutes": 60})[0], 409)
+        self.post(f"/api/devices/{TV}/pausable", {"allowed": True}, self.pin)
+        self.post(f"/api/devices/{OTHER}/pausable", {"allowed": True}, self.pin)
+        status, body = self.post("/api/people/pause", {"person": "Fenly", "minutes": 60})
+        self.assertEqual((status, body["count"]), (200, 2))
+        self.assertEqual(len(FakeClient.admin_state.clients), 2)
+        self.assertEqual(self.post("/api/people/resume", {"person": "Fenly"})[0], 401)
+        self.assertEqual(self.post("/api/people/resume", {"person": "Fenly"}, self.pin)[1]["count"], 2)
+        self.assertEqual(FakeClient.admin_state.clients, {})
+        pausing = self.get("/api/pausing")
+        self.assertTrue(pausing["pin_set"])
+        self.assertEqual(sorted(d["mac"] for d in pausing["devices"]), [TV, OTHER])
+
+    def test_without_a_pin(self):
+        self.start(SimpleNamespace(url="", password="", sync_trigger="", pausable=[TV], pin=""))
+        # The new things are off, and resuming works as it always did.
+        self.assertEqual(self.post(f"/api/devices/{OTHER}/pausable", {"allowed": True})[0], 409)
+        self.assertEqual(self.post("/api/schedules", {})[0], 409)
+        self.assertEqual(self.post(f"/api/devices/{TV}/pause", {"until": None})[0], 200)
+        self.assertEqual(self.post(f"/api/devices/{TV}/resume", {})[0], 200)
 
 
 class HistoryTest(unittest.TestCase):

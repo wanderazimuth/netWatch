@@ -56,7 +56,7 @@ def clean(body: dict, people: list[str], current_person: str | None = None, now:
 
 
 # Moved from the old MAC to the new one, unless the new one already has its own.
-CARRIED = ("label", "kind", "floor", "room", "person", "notes", "down_after")
+CARRIED = ("label", "kind", "floor", "room", "person", "notes", "down_after", "pause_allowed")
 
 
 def merge(conn, old: str, new: str) -> None:
@@ -83,6 +83,7 @@ def merge(conn, old: str, new: str) -> None:
     conn.execute(f"UPDATE devices SET {', '.join(k + ' = ?' for k in updates)} WHERE mac = ?", (*updates.values(), new))
     conn.execute("UPDATE events SET mac = ? WHERE mac = ?", (new, old))
     conn.execute("UPDATE traffic SET mac = ? WHERE mac = ?", (new, old))
+    conn.execute("UPDATE schedules SET mac = ? WHERE mac = ?", (new, old))
     # Open ports belong to the old address; the new one gets its own scan.
     conn.execute("DELETE FROM ports WHERE mac = ?", (old,))
     conn.execute("DELETE FROM devices WHERE mac = ?", (old,))

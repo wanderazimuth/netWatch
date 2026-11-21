@@ -20,6 +20,9 @@ class PiholeConfig:
     # MACs of the only devices the dashboard may pause. Kept here rather than in
     # the dashboard so nobody on the LAN can widen it. Empty = pausing is off.
     pausable: list[str] = field(default_factory=list)
+    # Needed on the dashboard to let more devices be paused, change pause schedules, or resume a
+    # paused device early. Empty = those are off.
+    pin: str = ""
 
 
 @dataclass
@@ -54,6 +57,7 @@ def load(path: str | Path) -> Config:
     if pihole is not None:
         config.pihole = PiholeConfig(**pihole)
         config.pihole.pausable = [m.strip().lower().replace("-", ":") for m in config.pihole.pausable]
+        config.pihole.pin = str(config.pihole.pin).strip()  # pin = 1234 without quotes is fine too
     if deco is not None:
         config.deco = DecoConfig(**deco)
     if config.offline_after <= config.scan_interval:

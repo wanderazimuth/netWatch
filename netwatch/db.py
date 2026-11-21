@@ -18,6 +18,9 @@ CREATE TABLE IF NOT EXISTS devices (
     paused_ip  TEXT,              -- IP whose lookups Pi-hole is blocking; NULL = not paused
     paused_until INTEGER,         -- when the pause ends; NULL = until resumed
     paused_restore TEXT,          -- JSON: the Pi-hole client entry paused_ip had before, to put back
+    paused_by  INTEGER,           -- the schedule that paused it; NULL = paused by hand
+    pause_allowed INTEGER,        -- 1 = the dashboard may pause it (set with the PIN); NULL = no
+    sched_skip_until INTEGER,     -- resumed by hand during a schedule: no scheduled pause before this
     ports_scanned INTEGER,        -- last port scan of this device; NULL = never scanned
     status     TEXT,              -- known / guest; NULL = still to review
     reviewed   INTEGER,           -- when it was last marked known or guest
@@ -80,6 +83,18 @@ CREATE TABLE IF NOT EXISTS speedtests (
 );
 CREATE INDEX IF NOT EXISTS speedtests_ts ON speedtests(ts);
 
+-- When to pause devices (schedule.py). Each targets one device or one person's pausable devices.
+CREATE TABLE IF NOT EXISTS schedules (
+    id         INTEGER PRIMARY KEY,
+    mac        TEXT,              -- the device, or NULL when it's for a person
+    person     TEXT,
+    days       TEXT NOT NULL,     -- the weekdays it starts on, as digits: 0 = Monday ... 6 = Sunday
+    start      TEXT NOT NULL,     -- "HH:MM" local time
+    end        TEXT NOT NULL,     -- "HH:MM"; earlier than start means the next morning
+    enabled    INTEGER NOT NULL DEFAULT 1,
+    skip_until INTEGER            -- "Skip tonight": not before this unix time
+);
+
 CREATE TABLE IF NOT EXISTS settings (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL           -- JSON
@@ -96,6 +111,9 @@ ADDED_COLUMNS = {
     "paused_ip": "TEXT",
     "paused_until": "INTEGER",
     "paused_restore": "TEXT",
+    "paused_by": "INTEGER",
+    "pause_allowed": "INTEGER",
+    "sched_skip_until": "INTEGER",
     "ports_scanned": "INTEGER",
     "status": "TEXT",
     "reviewed": "INTEGER",

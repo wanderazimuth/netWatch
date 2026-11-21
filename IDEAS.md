@@ -7,7 +7,8 @@ people build with similar tools (NetAlertX / Pi.Alert, WatchYourLAN, Fing).
 
 1. ~~**Offline alerts for chosen devices.**~~ Done: the 🚨 column on the dashboard.
 2. ~~**Per-device detail page.**~~ Done: click a device row on the dashboard.
-3. ~~**"Pause internet" button.**~~ Done: on each device's page.
+3. ~~**"Pause internet" button.**~~ Done: on each device's page. Then (2026-11-21) Allow pausing
+   with a PIN, Pause all per person, and pause schedules: the Pausing page.
 4. ~~**Weekly port scan.**~~ Done: open ports on each device's page, alerts for new ones.
 5. **New-device triage** (planned 2026-11-08, in three steps):
    1. ~~Inventory: review status (to review / known / guest), type, floor, room, person, notes,

@@ -41,6 +41,11 @@ def _unpause_ip(admin, ip: str, restore: str | None) -> None:
         admin.delete_client(ip)
 
 
+def allowed(row, listed: frozenset[str]) -> bool:
+    """Devices you've said may be paused: in config.toml's pausable list, or allowed on the dashboard with the PIN."""
+    return row["mac"] in listed or bool(row["pause_allowed"])
+
+
 def touch(trigger: str) -> None:
     """Tell anything watching (e.g. a systemd path unit that runs the NAS sync) that Pi-hole changed."""
     if trigger:
@@ -50,8 +55,11 @@ def touch(trigger: str) -> None:
             log.warning("could not touch %s", trigger, exc_info=True)
 
 
-def pause(conn: sqlite3.Connection, admin, mac: str, until: int | None) -> None:
-    """Pause until the given unix time, or indefinitely if None. Re-pausing just changes the end time."""
+def pause(conn: sqlite3.Connection, admin, mac: str, until: int | None, by: int | None = None) -> None:
+    """Pause until the given unix time, or indefinitely if None. Re-pausing just changes the end time.
+
+    by is the schedule doing it; None for a pause by hand.
+    """
     row = conn.execute("SELECT * FROM devices WHERE mac = ?", (mac,)).fetchone()
     if row is None:
         raise LookupError("unknown device")
@@ -64,8 +72,8 @@ def pause(conn: sqlite3.Connection, admin, mac: str, until: int | None) -> None:
             _unpause_ip(admin, row["paused_ip"], row["paused_restore"])
         restore = _pause_ip(admin, row["ip"])
     conn.execute(
-        "UPDATE devices SET paused_ip = ?, paused_until = ?, paused_restore = ? WHERE mac = ?",
-        (row["ip"], until, restore, mac),
+        "UPDATE devices SET paused_ip = ?, paused_until = ?, paused_restore = ?, paused_by = ? WHERE mac = ?",
+        (row["ip"], until, restore, by, mac),
     )
     conn.commit()
     log.info("paused internet for %s (%s)%s", db.display_name(row), row["ip"], "" if until else " until resumed")
@@ -78,7 +86,8 @@ def resume(conn: sqlite3.Connection, admin, mac: str) -> None:
     if row["paused_ip"]:
         _unpause_ip(admin, row["paused_ip"], row["paused_restore"])
         log.info("resumed internet for %s (%s)", db.display_name(row), row["paused_ip"])
-    conn.execute("UPDATE devices SET paused_ip = NULL, paused_until = NULL, paused_restore = NULL WHERE mac = ?", (mac,))
+    conn.execute("UPDATE devices SET paused_ip = NULL, paused_until = NULL, paused_restore = NULL, paused_by = NULL"
+                 " WHERE mac = ?", (mac,))
     conn.commit()
 
 
@@ -99,6 +108,6 @@ def maintain(conn: sqlite3.Connection, admin, now: int) -> bool:
             resume(conn, admin, row["mac"])
             changed = True
         elif row["ip"] and row["ip"] != row["paused_ip"]:
-            pause(conn, admin, row["mac"], row["paused_until"])
+            pause(conn, admin, row["mac"], row["paused_until"], row["paused_by"])
             changed = True
     return changed

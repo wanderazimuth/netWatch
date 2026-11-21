@@ -208,6 +208,22 @@
                   background: var(--bg); color: var(--text); }
   dialog textarea { font: inherit; width: 100%; padding: 6px 8px; border: 1px solid var(--border); border-radius: 7px;
                     background: var(--bg); color: var(--text); }
+  .pz-group { padding: 10px 0; border-top: 1px solid var(--border); }
+  .pz-group:first-child { border-top: 0; padding-top: 0; }
+  .pz-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 4px; }
+  .pz-head strong { margin-right: auto; }
+  .pz-row { display: flex; align-items: center; gap: 10px; padding: 5px 0 5px 12px; }
+  .pz-row .what { flex: 1; min-width: 0; }
+  .pz-row a, .sched-row a { color: inherit; text-decoration: none; }
+  .pz-row a:hover, .sched-row a:hover { color: var(--accent); }
+  .sched-row { display: flex; align-items: center; gap: 8px; padding: 8px 0; border-top: 1px solid var(--border); flex-wrap: wrap; }
+  .sched-row:first-child { border-top: 0; }
+  .sched-row .what { flex: 1; min-width: 200px; }
+  .sched-row.off .what { opacity: .55; }
+  .sched-row .running { color: var(--new); font-weight: 600; }
+  #sched-days button { padding: 6px 9px; }
+  .pin-input { font: inherit; font-size: 22px; letter-spacing: .3em; width: 9em; padding: 6px 10px; text-align: center;
+               border: 1px solid var(--border); border-radius: 7px; background: var(--bg); color: var(--text); }
   @media (max-width: 900px) {
     .detail-grid { grid-template-columns: minmax(0, 1fr); }
     .layout { grid-template-columns: minmax(0, 1fr); }
@@ -223,6 +239,7 @@
     <h1>NetWatch</h1>
     <div class="head-right">
       <span class="updated" id="updated">Loading…</span>
+      <button class="pill" id="pausing-pill" title="Pause devices' internet, now or on a schedule">⏸ Pausing</button>
       <button class="pill" id="security-pill" title="Network security checks">🛡️ Security</button>
       <button class="pill" id="alerts-pill" title="Alert settings">🔔 Alerts</button>
     </div>
@@ -297,6 +314,35 @@
         </select>.
         A shorter time catches quick errands but may call a sleeping phone away.</p>
       <div class="status" id="away-status"></div>
+    </section>
+  </div>
+
+  <div id="pausing-view" hidden>
+    <a href="#" class="back">← All devices</a>
+    <div class="warn" id="pz-setup" hidden style="margin:0 0 16px"></div>
+    <section class="panel">
+      <h2>Pause now</h2>
+      <div id="pz-people"></div>
+    </section>
+    <section class="panel" style="margin-top:16px">
+      <div class="speed-head">
+        <h2>Schedules</h2>
+        <button class="btn primary" id="pz-add">Add schedule</button>
+      </div>
+      <div id="pz-schedules"></div>
+    </section>
+    <section class="panel" style="margin-top:16px">
+      <h2>How it works</h2>
+      <p class="hint" style="font-size:13px">A paused device can't look anything up through Pi-hole, so the
+        internet stops working on it within a minute or two. Apps that are already connected may carry on until
+        they reconnect, and a device set to use its own DNS server (on Android, Private DNS) isn't affected.</p>
+      <p class="hint" style="font-size:13px">Only devices allowed to be paused are here. To add one, open its page
+        and choose <strong>Allow pausing</strong>. Anyone at home can pause these devices, but allowing a device,
+        changing schedules and resuming early take the PIN. A schedule for a person covers each of their devices
+        that's allowed to be paused, including ones added later. A device resumed early stays unpaused until that
+        night's schedule ends.</p>
+      <div class="btns"><button class="btn" id="pz-forget" hidden>Forget the PIN on this device</button></div>
+      <div class="status" id="pz-status"></div>
     </section>
   </div>
 
@@ -413,6 +459,7 @@
     </div>
     <div class="detail-grid">
       <section class="panel"><h2>About this device</h2><div id="d-about"></div></section>
+      <section class="panel" id="d-pausing-panel" hidden><h2>Pausing</h2><div id="d-pausing"></div></section>
       <section class="panel"><h2>Details</h2><dl class="facts" id="d-facts"></dl></section>
       <section class="panel"><h2>Online, last 7 days</h2><div id="d-history"></div></section>
       <section class="panel"><h2>Internet use, last 7 days</h2><div id="d-usage"></div></section>
@@ -508,6 +555,53 @@
   </div>
 </dialog>
 
+<dialog id="pin-dlg">
+  <div class="dlg-head">
+    <h2>PIN</h2>
+    <button class="x" id="pin-close" aria-label="Close">×</button>
+  </div>
+  <div class="dlg-body">
+    <p id="pin-why"></p>
+    <form id="pin-form" class="btns">
+      <input type="password" id="pin-input" class="pin-input" inputmode="numeric" autocomplete="off" aria-label="PIN">
+      <button class="btn primary">OK</button>
+    </form>
+    <label class="row" style="margin-top:8px"><input type="checkbox" id="pin-remember" checked>
+      <span>Remember it on this device<div class="hint">Leave this off on someone else's phone.</div></span></label>
+  </div>
+</dialog>
+
+<dialog id="sched-dlg">
+  <div class="dlg-head">
+    <h2 id="sched-title">Pause schedule</h2>
+    <button class="x" id="sched-close" aria-label="Close">×</button>
+  </div>
+  <div class="dlg-body">
+    <div class="form" style="margin-top:10px">
+      <label for="sched-target">Pause</label>
+      <select id="sched-target"></select>
+      <label>Starting</label>
+      <div>
+        <div class="seg" id="sched-days"></div>
+        <div class="btns" style="margin-top:6px">
+          <button type="button" class="linkish" data-days="6,0,1,2,3">School nights</button>
+          <button type="button" class="linkish" data-days="0,1,2,3,4">Weekdays</button>
+          <button type="button" class="linkish" data-days="0,1,2,3,4,5,6">Every day</button>
+        </div>
+      </div>
+      <label for="sched-start">From</label>
+      <div class="pair"><input type="time" id="sched-start" value="21:00"> to <input type="time" id="sched-end" value="07:00"></div>
+    </div>
+    <div class="hint" style="margin-top:8px">An end time earlier than the start means the next morning, so Sun–Thu
+      9 PM to 7 AM pauses Sunday night through Friday morning. Uses the server's clock.</div>
+    <div class="btns" style="margin-top:12px">
+      <button class="btn primary" id="sched-save">Save</button>
+      <button class="btn" id="sched-delete" hidden>Delete</button>
+    </div>
+    <div class="status" id="sched-status"></div>
+  </div>
+</dialog>
+
 <dialog id="down-dlg">
   <div class="dlg-head">
     <h2>Offline alert</h2>
@@ -585,12 +679,57 @@ let detailMac = null, detail = null;
 // The review walk-through: the devices to step through, and the ones skipped this time.
 let reviewing = false, skipped = new Set(), reviewWhenLoaded = false;
 
-async function post(url, body) {
-  const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-  const data = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(data.error || "HTTP " + r.status);
-  return data;
+// The PIN, for allowing pausing, schedules and resuming early. Kept in localStorage if you say so,
+// or else only until the page is closed.
+const PIN_KEY = "netwatch-pin";
+let sessionPin = null;
+function savedPin() {
+  if (sessionPin) return sessionPin;
+  try { return localStorage.getItem(PIN_KEY); } catch { return null; }
 }
+function forgetPin() {
+  sessionPin = null;
+  try { localStorage.removeItem(PIN_KEY); } catch { /* private mode */ }
+}
+
+async function post(url, body) {
+  for (;;) {
+    const headers = { "Content-Type": "application/json" };
+    const pin = savedPin();
+    if (pin) headers["X-NetWatch-PIN"] = pin;
+    const r = await fetch(url, { method: "POST", headers, body: JSON.stringify(body) });
+    const data = await r.json().catch(() => ({}));
+    if (r.status === 401 && data.pin) {
+      if (pin) forgetPin();
+      if (!await askPin(pin ? "Wrong PIN. Try again:" : "This needs the NetWatch PIN:")) throw new Error("it needs the PIN");
+      continue;
+    }
+    if (!r.ok) throw new Error(data.error || "HTTP " + r.status);
+    return data;
+  }
+}
+
+let pinAnswer = null;
+function askPin(why) {
+  $("pin-why").textContent = why;
+  $("pin-input").value = "";
+  $("pin-dlg").showModal();
+  $("pin-input").focus();
+  return new Promise((resolve) => { pinAnswer = resolve; });
+}
+$("pin-form").onsubmit = (e) => {
+  e.preventDefault();
+  const pin = $("pin-input").value.trim();
+  if (!pin) return;
+  sessionPin = pin;
+  if ($("pin-remember").checked) try { localStorage.setItem(PIN_KEY, pin); } catch { /* private mode */ }
+  const done = pinAnswer;
+  pinAnswer = null;
+  $("pin-dlg").close();
+  done(true);
+};
+$("pin-dlg").onclose = () => { if (pinAnswer) { pinAnswer(false); pinAnswer = null; } };
+$("pin-close").onclick = () => $("pin-dlg").close();
 
 function el(tag, props = {}, ...children) {
   const n = document.createElement(tag);
@@ -799,6 +938,8 @@ async function refresh() {
     loadSpeed();
     loadPeople();
     loadSecurity();
+    renderPausingPill();
+    if (location.hash === "#/pausing") loadPausing();
     if (detailMac) loadDetail();
     $("updated").textContent = saved
       ? "Offline: showing the list saved " + new Date(saved).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })
@@ -918,7 +1059,7 @@ function pausedText(d) {
 function pauseButton(d) {
   const b = el("button", { className: "btn" + (d.paused ? " primary" : ""), textContent: d.paused ? "▶ Resume internet" : "⏸ Pause internet" });
   b.onclick = async () => {
-    if (!d.paused) return openPauseDialog(d);
+    if (!d.paused) return openPauseDialog(d.name, `/api/devices/${d.mac}/pause`, {}, applyPause);
     b.disabled = true;
     try { applyPause(await post(`/api/devices/${d.mac}/resume`, {})); }
     catch (e) { showError("Couldn't resume: " + e.message); b.disabled = false; }
@@ -927,9 +1068,10 @@ function pauseButton(d) {
 }
 
 function applyPause(r) {
-  if (detail && detail.device.mac === r.device.mac) detail.device = r.device;
+  if (r.device && detail && detail.device.mac === r.device.mac) detail.device = r.device;
   renderDetail();
   refresh();
+  if (location.hash === "#/pausing") loadPausing();
 }
 
 function nextMorning() {
@@ -939,10 +1081,10 @@ function nextMorning() {
   return Math.floor(t / 1000);
 }
 
-let pauseDevice = null;
-function openPauseDialog(d) {
-  pauseDevice = d;
-  $("pause-name").textContent = d.name;
+let pauseTarget = null;
+function openPauseDialog(name, url, extra, done) {
+  pauseTarget = { url, extra, done };
+  $("pause-name").textContent = name;
   $("pause-status").textContent = "";
   const now = Math.floor(Date.now() / 1000);
   const options = [["30 minutes", now + 1800], ["1 hour", now + 3600], ["2 hours", now + 7200],
@@ -952,8 +1094,9 @@ function openPauseDialog(d) {
     b.onclick = async () => {
       $("pause-status").textContent = "Pausing…";
       try {
-        applyPause(await post(`/api/devices/${pauseDevice.mac}/pause`, { until }));
+        const r = await post(pauseTarget.url, { ...pauseTarget.extra, until });
         $("pause-dlg").close();
+        pauseTarget.done(r);
       } catch (e) { $("pause-status").textContent = "Not paused: " + e.message; }
     };
     return b;
@@ -986,12 +1129,18 @@ function route() {
   detail = null;
   formMac = null;
   const speedPage = location.hash === "#/speed", peoplePage = location.hash === "#/people";
-  const securityPage = location.hash === "#/security";
-  $("list-view").hidden = !!detailMac || speedPage || peoplePage || securityPage;
+  const securityPage = location.hash === "#/security", pausingPage = location.hash === "#/pausing";
+  $("list-view").hidden = !!detailMac || speedPage || peoplePage || securityPage || pausingPage;
   $("detail-view").hidden = !detailMac;
   $("speed-view").hidden = !speedPage;
   $("people-view").hidden = !peoplePage;
   $("security-view").hidden = !securityPage;
+  $("pausing-view").hidden = !pausingPage;
+  if (pausingPage) {
+    document.title = "Pausing · NetWatch";
+    window.scrollTo(0, 0);
+    return loadPausing();
+  }
   if (securityPage) {
     document.title = "Security · NetWatch";
     window.scrollTo(0, 0);
@@ -1014,7 +1163,8 @@ function route() {
     return renderDevices();
   }
   window.scrollTo(0, 0);
-  for (const id of ["d-name", "d-status", "d-actions", "d-about", "d-facts", "d-history", "d-usage", "d-ports", "d-events"]) $(id).replaceChildren();
+  for (const id of ["d-name", "d-status", "d-actions", "d-about", "d-pausing", "d-facts", "d-history", "d-usage", "d-ports", "d-events"]) $(id).replaceChildren();
+  $("d-pausing-panel").hidden = true;
   $("d-name").textContent = "Loading…";
   $("d-dot").className = "dot";
   loadDetail();
@@ -1066,6 +1216,7 @@ function renderDetail() {
   // Rebuilt only for a different device or after saving, so the 30 s refresh can't wipe what you're typing.
   if (formMac !== d.mac) renderAbout(d);
 
+  renderDevicePausing(d, detail.schedules);
   renderHistory(h);
   renderUsage(detail.usage, detail.usage_totals);
   renderPorts(detail.ports, detail.ports_scanned);
@@ -1825,6 +1976,243 @@ function renderSecurity() {
           el("div", { className: "when", textContent: ago(h.ts), title: fullTime(h.ts) }))))
     : [el("li", { className: "empty", textContent: "Nothing found yet." })]));
 }
+
+// ---- pausing: now, by person, and on a schedule (#/pausing)
+let pausing = null;
+const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];  // the server's weekdays: 0 = Monday
+const canBePaused = (d) => d.pause_allowed || d.pause_listed;
+
+function renderPausingPill() {
+  const n = devices.filter((d) => d.paused).length;
+  $("pausing-pill").textContent = n ? `⏸ ${n} paused` : "⏸ Pausing";
+  $("pausing-pill").classList.toggle("snoozed", n > 0);
+}
+$("pausing-pill").onclick = () => { location.hash = "#/pausing"; };
+
+async function loadPausing() {
+  try {
+    const r = await fetch("/api/pausing");
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || "HTTP " + r.status);
+    pausing = data;
+    if (location.hash === "#/pausing") renderPausing();
+  } catch (e) { if (location.hash === "#/pausing") showError("Couldn't load pausing: " + e.message); }
+}
+
+function hm(hhmm) {
+  const [h, m] = hhmm.split(":").map(Number);
+  return new Date(2000, 0, 1, h, m).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+}
+
+function daysText(days) {
+  const key = [...days].sort().join("");
+  return { "0123456": "Every day", "01234": "Mon–Fri", "56": "Sat & Sun", "01236": "Sun–Thu" }[key]
+    || days.map((d) => DAY_NAMES[d]).join(", ");
+}
+
+function scheduleState(s, now) {
+  if (!s.enabled) return "Switched off";
+  if (!s.next) return "";
+  const skipped = s.skip_until && s.skip_until > now ? "Skipped until " + when(s.skip_until) + ". " : "";
+  if (s.running) return "Pausing now, until " + when(s.next[1]);
+  return skipped + "Next: " + when(s.next[0]);
+}
+
+function scheduleRow(s, now) {
+  const edit = el("button", { className: "btn", textContent: "Edit" });
+  edit.onclick = () => openSchedule(s);
+  const skipping = s.skip_until && s.skip_until > now;
+  const skip = el("button", { className: "btn", textContent: skipping ? "Don't skip" : s.running ? "Stop this one" : "Skip next",
+    title: skipping ? "Pause as usual" : "Leave the next pause out, once" });
+  skip.disabled = !s.enabled;
+  skip.onclick = () => changeSchedule(`/api/schedules/${s.id}/skip`, { skip: !skipping });
+  const toggle = el("button", { className: "btn", textContent: s.enabled ? "Switch off" : "Switch on" });
+  toggle.onclick = () => changeSchedule(`/api/schedules/${s.id}`, {
+    [s.mac ? "mac" : "person"]: s.mac || s.person, days: s.days, start: s.start, end: s.end, enabled: !s.enabled });
+  const usable = s.devices.filter((x) => x.pausable);
+  const covers = s.person
+    ? (usable.length ? usable.map((x) => x.name).join(", ") : `None of ${s.person}'s devices are allowed to be paused yet.`)
+    : usable.length ? "" : "This device isn't allowed to be paused any more.";
+  const state = scheduleState(s, now);
+  return el("div", { className: "sched-row" + (s.enabled ? "" : " off") },
+    el("div", { className: "what" },
+      el("div", {}, el("strong", {}, s.mac ? el("a", { href: "#/device/" + s.mac, textContent: s.name }) : s.name),
+        ` · ${daysText(s.days)}, ${hm(s.start)} – ${hm(s.end)}`),
+      state ? el("div", { className: "sub" + (s.running ? " running" : ""), textContent: state }) : null,
+      covers ? el("div", { className: "sub", textContent: covers }) : null),
+    skip, toggle, edit);
+}
+
+async function changeSchedule(url, body) {
+  try {
+    const r = await post(url, body);
+    pausing = r;
+    $("pz-status").textContent = r.warning || "";
+    renderPausing();
+    refresh();
+  } catch (e) { showError("Not changed: " + e.message); }
+}
+
+function deviceRow(d) {
+  return el("div", { className: "pz-row" },
+    el("span", { className: "dot" + (d.online ? " on" : "") }),
+    el("div", { className: "what" },
+      el("a", { href: "#/device/" + d.mac, textContent: (d.kind ? KINDS[d.kind][0] + " " : "") + d.name }),
+      el("div", { className: "sub", textContent: d.paused ? pausedText(d) + (d.paused_by ? " (schedule)" : "")
+        : canBePaused(d) ? (d.online ? "Online" : "Offline, last seen " + ago(d.last_seen)) : "Paused, but no longer allowed to be" })),
+    pauseButton(d));
+}
+
+function renderPausing() {
+  const p = pausing;
+  serverNow = p.now;
+  const setup = !p.pihole_configured ? "Pausing needs Pi-hole: add a [pihole] section to /etc/netwatch/config.toml."
+    : !p.pin_set ? "No PIN is set, so you can't allow more devices to be paused or add schedules. Add pin = \"…\" (your "
+      + "choice of digits) under [pihole] in /etc/netwatch/config.toml, then restart netwatch and netwatch-web." : "";
+  $("pz-setup").hidden = !setup;
+  $("pz-setup").textContent = setup;
+  $("pz-add").disabled = !p.pin_set;
+  $("pz-forget").hidden = !savedPin();
+
+  // Each person with devices that can be paused, then the devices nobody's down for.
+  const groups = [...p.people, null].map((person) => [person, p.devices.filter((d) => (d.person || null) === person)])
+    .filter(([person, list]) => list.length);
+  for (const d of p.devices) {
+    if (d.person && !p.people.includes(d.person) && !groups.some(([x]) => x === d.person)) {
+      groups.push([d.person, p.devices.filter((x) => x.person === d.person)]);
+    }
+  }
+  $("pz-people").replaceChildren(...(groups.length ? groups.map(([person, list]) => {
+    const head = el("div", { className: "pz-head" }, el("strong", { textContent: person || "Shared / nobody" }));
+    if (person && list.some(canBePaused)) {
+      const all = el("button", { className: "btn", textContent: "⏸ Pause all" });
+      all.onclick = () => openPauseDialog(`${person}'s devices`, "/api/people/pause", { person }, applyPause);
+      head.append(all);
+    }
+    if (person && list.some((d) => d.paused)) {
+      const resume = el("button", { className: "btn primary", textContent: "▶ Resume all" });
+      resume.onclick = async () => {
+        resume.disabled = true;
+        try { applyPause(await post("/api/people/resume", { person })); }
+        catch (e) { showError("Couldn't resume: " + e.message); resume.disabled = false; }
+      };
+      head.append(resume);
+    }
+    return el("div", { className: "pz-group" }, head, ...list.map(deviceRow));
+  }) : [el("div", { className: "empty", textContent: "No devices can be paused yet. Open a device's page and choose Allow pausing." })]));
+
+  $("pz-schedules").replaceChildren(...(p.schedules.length ? p.schedules.map((s) => scheduleRow(s, p.now))
+    : [el("div", { className: "empty", textContent: "No schedules yet." })]));
+}
+
+$("pz-add").onclick = () => openSchedule(null);
+$("pz-forget").onclick = () => { forgetPin(); $("pz-forget").hidden = true; $("pz-status").textContent = "Forgotten ✓"; };
+
+// The device page's Pausing panel: whether it can be paused, and the schedules that cover it.
+function renderDevicePausing(d, schedules) {
+  const panel = $("d-pausing-panel");
+  panel.hidden = !settings || !settings.pihole_configured || d.router;
+  if (panel.hidden) return;
+  const now = serverNow, parts = [];
+  if (d.pause_listed) {
+    parts.push(el("p", { className: "hint", textContent: "Can always be paused: it's in the pausable list in config.toml." }));
+  } else if (d.pause_allowed) {
+    const stop = el("button", { className: "linkish", textContent: "Stop allowing pausing" });
+    stop.onclick = () => setPausable(d, false);
+    parts.push(el("p", { className: "hint" }, "Can be paused, and covered by schedules. ", stop));
+  } else {
+    const allow = el("button", { className: "btn", textContent: "🔓 Allow pausing" });
+    allow.onclick = () => setPausable(d, true);
+    parts.push(el("p", { className: "hint", textContent: d.status === "review"
+      ? "Can be paused while it's still to review. Allow pausing to keep it pausable, and to schedule it."
+      : "Not allowed to be paused. Allowing it takes the PIN." }), allow);
+  }
+  if (schedules.length) {
+    parts.push(...schedules.map((s) => el("div", { className: "sub", style: "margin-top:6px" },
+      el("a", { href: "#/pausing", textContent: (s.person ? s.person + "'s schedule" : "Schedule") }),
+      `: ${daysText(s.days)}, ${hm(s.start)} – ${hm(s.end)}. ${scheduleState(s, now)}`)));
+  }
+  if (canBePaused(d)) {
+    const add = el("button", { className: "btn", textContent: "Add schedule", style: "margin-top:8px" });
+    add.onclick = () => openSchedule(null, d.mac);
+    parts.push(add);
+  }
+  $("d-pausing").replaceChildren(...parts);
+}
+
+async function setPausable(d, allowed) {
+  try {
+    const r = await post(`/api/devices/${d.mac}/pausable`, { allowed });
+    if (r.warning) showError(r.warning);
+    if (detail && detail.device.mac === d.mac) detail.device = r.device;
+    renderDetail();
+    loadDetail();
+    refresh();
+  } catch (e) { showError("Not changed: " + e.message); }
+}
+
+// ---- the schedule dialog
+let schedEditing = null, schedDays = new Set();
+function renderSchedDays() {
+  $("sched-days").replaceChildren(...DAY_NAMES.map((name, i) => {
+    const b = el("button", { type: "button", textContent: name, className: schedDays.has(i) ? "active" : "" });
+    b.onclick = () => { schedDays.has(i) ? schedDays.delete(i) : schedDays.add(i); renderSchedDays(); };
+    return b;
+  }));
+}
+document.querySelectorAll("#sched-dlg [data-days]").forEach((b) => b.onclick = () => {
+  schedDays = new Set(b.dataset.days.split(",").map(Number));
+  renderSchedDays();
+});
+
+async function openSchedule(s, mac = null) {
+  if (!pausing) await loadPausing();
+  if (!pausing) return;
+  schedEditing = s;
+  const target = $("sched-target");
+  const people = el("optgroup", { label: "Everything of…" }, ...pausing.people.map((p) => el("option", { value: "person:" + p, textContent: p })));
+  const list = pausing.devices.filter(canBePaused);
+  if (s && s.mac && !list.some((d) => d.mac === s.mac)) list.push({ mac: s.mac, name: s.name });
+  const devs = el("optgroup", { label: "One device" }, ...list.map((d) => el("option", { value: "mac:" + d.mac, textContent: d.name })));
+  target.replaceChildren(people, devs);
+  // A new one starts on the first person who has something to pause.
+  const someone = pausing.people.find((p) => list.some((d) => d.person === p));
+  target.value = s ? (s.mac ? "mac:" + s.mac : "person:" + s.person) : mac ? "mac:" + mac
+    : someone ? "person:" + someone : target.options[0]?.value;
+  schedDays = new Set(s ? s.days : [6, 0, 1, 2, 3]);
+  renderSchedDays();
+  $("sched-start").value = s ? s.start : "21:00";
+  $("sched-end").value = s ? s.end : "07:00";
+  $("sched-title").textContent = s ? "Edit schedule" : "Add schedule";
+  $("sched-delete").hidden = !s;
+  $("sched-status").textContent = "";
+  $("sched-dlg").showModal();
+}
+
+async function saveSchedule(url, body) {
+  $("sched-status").textContent = "Saving…";
+  try {
+    pausing = await post(url, body);
+    $("sched-dlg").close();
+    $("pz-status").textContent = pausing.warning || "";
+    if (location.hash === "#/pausing") renderPausing();
+    if (detailMac) loadDetail();
+    refresh();
+  } catch (e) { $("sched-status").textContent = "Not saved: " + e.message; }
+}
+
+$("sched-save").onclick = () => {
+  const [kind, value] = $("sched-target").value.split(/:(.*)/);
+  if (!value) return void ($("sched-status").textContent = "Choose who or what to pause.");
+  const s = schedEditing;
+  saveSchedule(s ? `/api/schedules/${s.id}` : "/api/schedules", {
+    [kind]: value, days: [...schedDays].sort(), start: $("sched-start").value, end: $("sched-end").value,
+    enabled: s ? s.enabled : true,
+  });
+};
+$("sched-delete").onclick = () => saveSchedule(`/api/schedules/${schedEditing.id}/delete`, {});
+$("sched-close").onclick = () => $("sched-dlg").close();
+$("sched-dlg").onclick = (e) => { if (e.target === $("sched-dlg")) $("sched-dlg").close(); };
 
 $("security-pill").onclick = () => { location.hash = "#/security"; };
 document.querySelectorAll(".sec-link").forEach((a) => a.onclick = () => $("alerts").close());
