@@ -470,6 +470,36 @@ class PinTest(unittest.TestCase):
         self.assertTrue(pausing["pin_set"])
         self.assertEqual(sorted(d["mac"] for d in pausing["devices"]), [TV, OTHER])
 
+    def test_groups(self):
+        group = {"name": "Family devices", "macs": [TV, OTHER]}
+        self.assertEqual(self.post("/api/groups", group)[0], 401)
+        self.assertEqual(self.post("/api/groups", {**group, "macs": ["00:00:00:00:00:01"]}, self.pin)[0], 400)
+        status, body = self.post("/api/groups", group, self.pin)
+        self.assertEqual(status, 200)
+        gid = body["groups"][0]["id"]
+        self.assertEqual(self.post("/api/groups", group, self.pin)[0], 400)  # the same name twice
+        # In a group isn't the same as allowed to be paused.
+        self.assertEqual(self.post(f"/api/groups/{gid}/pause", {"minutes": 60})[0], 409)
+        self.post(f"/api/devices/{TV}/pausable", {"allowed": True}, self.pin)
+        status, body = self.post(f"/api/groups/{gid}/pause", {"minutes": 60})
+        self.assertEqual((status, body["count"]), (200, 1))
+        self.assertEqual(list(FakeClient.admin_state.clients), ["192.168.0.20"])
+        self.assertEqual(self.post(f"/api/groups/{gid}/resume", {})[0], 401)
+        self.assertEqual(self.post(f"/api/groups/{gid}/resume", {}, self.pin)[1]["count"], 1)
+        self.assertEqual(FakeClient.admin_state.clients, {})
+        self.assertEqual(self.get(f"/api/devices/{TV}")["groups"], ["Family devices"])
+        # A schedule for it, running now, pauses the allowed one straight away.
+        sched = {"group": gid, "days": [0, 1, 2, 3, 4, 5, 6], "start": "00:00", "end": "23:59"}
+        status, body = self.post("/api/schedules", sched, self.pin)
+        self.assertEqual((status, body["schedules"][0]["name"]), (200, "Family devices"))
+        self.assertTrue(self.device(TV)["paused"])
+        # Deleting the group takes its schedule, and so its pause.
+        self.assertEqual(self.post(f"/api/groups/{gid}/delete", {}, self.pin)[0], 200)
+        pausing = self.get("/api/pausing")
+        self.assertEqual((pausing["groups"], pausing["schedules"]), ([], []))
+        self.assertFalse(self.device(TV)["paused"])
+        self.assertEqual(self.post(f"/api/groups/{gid}/pause", {"minutes": 60})[0], 404)
+
     def test_without_a_pin(self):
         self.start(SimpleNamespace(url="", password="", sync_trigger="", pausable=[TV], pin=""))
         # The new things are off, and resuming works as it always did.

@@ -23,6 +23,7 @@ from . import db, inventory, notify, tracker
 from . import deco as deco_mod
 from . import pause as pause_mod
 from . import presence
+from . import groups as groups_mod
 from . import schedule as schedule_mod
 from . import security as security_mod
 from . import settings as settings_mod
@@ -41,6 +42,7 @@ IPV4 = re.compile(r"(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\
 DEVICE_PATH = re.compile(
     r"/api/devices/([0-9a-f]{2}(?::[0-9a-f]{2}){5})/(label|notify|down_after|pause|resume|review|merge|pausable)")
 SCHEDULE_PATH = re.compile(r"/api/schedules(?:/(\d+)(?:/(skip|delete))?)?")
+GROUP_PATH = re.compile(r"/api/groups(?:/(\d+)(?:/(delete|pause|resume))?)?")
 MAX_PAUSE = 7 * 86400
 # Wrong PINs in a row before the PIN stops working for a while, so it can't be guessed.
 PIN_TRIES, PIN_LOCKOUT = 5, 15 * 60
@@ -268,6 +270,7 @@ def make_handler(db_path: str, ntfy_url: str = "", dashboard_url: str = "",
                     "device": device_json(row, pausable, gateway),
                     "schedules": [schedule_mod.to_json(conn, x, now, pausable)
                                   for x in schedule_mod.for_device(conn, row)],
+                    "groups": groups_mod.names_for(conn, mac),
                     "history": online_spans(conn, mac, since, now, offline_after),
                     "events": events_json(conn, 100, mac),
                     "ports_scanned": row["ports_scanned"],
@@ -536,11 +539,23 @@ def make_handler(db_path: str, ntfy_url: str = "", dashboard_url: str = "",
             if not isinstance(person, str):
                 return self._json({"error": "person must be a name"}, 400)
             rows = conn.execute("SELECT * FROM devices WHERE person = ?", (person,)).fetchall()
+            return self._pause_many(conn, action, rows, f"{person}'s devices", body)
+
+        def _pause_group(self, conn, gid: int, action: str, body: dict):
+            if pihole is None:
+                return self._json({"error": "Pi-hole isn't set up in config.toml"}, 409)
+            g = conn.execute("SELECT * FROM device_groups WHERE id = ?", (gid,)).fetchone()
+            if g is None:
+                return self._json({"error": "unknown group"}, 404)
+            return self._pause_many(conn, action, groups_mod.members(conn, gid), f"the devices in {g['name']}", body)
+
+        def _pause_many(self, conn, action: str, rows, who: str, body: dict):
+            """Pause, or resume, the ones of rows that can be paused. Resuming takes the PIN, as for one device."""
             until = None
             if action == "pause":
                 rows = [r for r in rows if pause_mod.allowed(r, pausable) and r["ip"]]
                 if not rows:
-                    return self._json({"error": f"none of {person}'s devices can be paused"}, 409)
+                    return self._json({"error": f"none of {who} can be paused"}, 409)
                 ok, until = self._until(body)
                 if not ok:
                     return
@@ -557,7 +572,7 @@ def make_handler(db_path: str, ntfy_url: str = "", dashboard_url: str = "",
                             else:
                                 self._resume(conn, admin, r)
             except Exception as e:
-                log.warning("Pi-hole %s for %s failed", action, person, exc_info=True)
+                log.warning("Pi-hole %s for %s failed", action, who, exc_info=True)
                 return self._json({"error": f"Pi-hole {action} failed: {e}"}, 502)
             pause_mod.touch(pihole.sync_trigger)
             return self._json({"ok": True, "warning": self._sync_deco(conn), "count": len(rows)})
@@ -624,6 +639,27 @@ def make_handler(db_path: str, ntfy_url: str = "", dashboard_url: str = "",
             warning = self._apply_schedules(conn)
             return self._json({"ok": True, "warning": warning, **self._pausing(conn)})
 
+        def _groups(self, conn, gid: str | None, action: str | None, body: dict):
+            if action in ("pause", "resume"):
+                return self._pause_group(conn, int(gid), action, body)
+            if pihole is None:
+                return self._json({"error": "Pi-hole isn't set up in config.toml"}, 409)
+            if not self._pin_ok(setup=True):
+                return
+            try:
+                if action == "delete":
+                    groups_mod.delete(conn, int(gid))
+                else:
+                    name, macs = groups_mod.clean(body, conn, int(gid) if gid else None)
+                    groups_mod.save(conn, int(gid) if gid else None, name, macs)
+            except LookupError as e:
+                return self._json({"error": str(e)}, 404)
+            except ValueError as e:
+                return self._json({"error": str(e)}, 400)
+            # Who's in it changed, so a running schedule for it may pause or lift some now.
+            warning = self._apply_schedules(conn)
+            return self._json({"ok": True, "warning": warning, **self._pausing(conn)})
+
         def _pausing(self, conn) -> dict:
             """The Pausing page: the devices that can be paused (or are), and the schedules."""
             now = int(time.time())
@@ -632,6 +668,7 @@ def make_handler(db_path: str, ntfy_url: str = "", dashboard_url: str = "",
             return {"now": now, "pihole_configured": pihole is not None, "pin_set": bool(pin),
                     "people": settings_mod.load(conn)["people"],
                     "devices": [device_json(r, pausable, gateway) for r in rows],
+                    "groups": groups_mod.all_json(conn, pausable),
                     "schedules": schedule_mod.all_json(conn, now, pausable)}
 
         def do_POST(self):
@@ -682,6 +719,10 @@ def make_handler(db_path: str, ntfy_url: str = "", dashboard_url: str = "",
                 m = SCHEDULE_PATH.fullmatch(path)
                 if m:
                     return self._schedules(conn, *m.groups(), body)
+
+                m = GROUP_PATH.fullmatch(path)
+                if m:
+                    return self._groups(conn, *m.groups(), body)
 
                 m = DEVICE_PATH.fullmatch(path)
                 if not m:

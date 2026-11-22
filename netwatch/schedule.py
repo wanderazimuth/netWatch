@@ -1,4 +1,4 @@
-"""Pause schedules: pause a device, or all of a person's pausable devices, at set times each week.
+"""Pause schedules: pause a device, or all of a person's or group's pausable devices, at set times each week.
 
 The scanner applies them every minute (run). A schedule's pause ends when its window does. If someone
 resumes a device by hand during a window, sched_skip_until keeps the schedule from pausing it again
@@ -13,12 +13,13 @@ import sqlite3
 from datetime import datetime, time, timedelta
 
 from . import db
+from . import groups as groups_mod
 from . import pause as pause_mod
 
 log = logging.getLogger(__name__)
 
 MAX_SCHEDULES = 50
-FIELDS = ("mac", "person", "days", "start", "end", "enabled")
+FIELDS = ("mac", "person", "group", "days", "start", "end", "enabled")
 TIME = re.compile(r"(?:[01]\d|2[0-3]):[0-5]\d")
 MAC = re.compile(r"[0-9a-f]{2}(?::[0-9a-f]{2}){5}")
 
@@ -64,13 +65,17 @@ def active_until(s, now: int) -> int | None:
 def targets(conn: sqlite3.Connection, s) -> list[sqlite3.Row]:
     if s["mac"]:
         return conn.execute("SELECT * FROM devices WHERE mac = ?", (s["mac"],)).fetchall()
+    if s["group_id"] is not None:
+        return groups_mod.members(conn, s["group_id"])
     return conn.execute("SELECT * FROM devices WHERE person = ?", (s["person"],)).fetchall()
 
 
 def for_device(conn: sqlite3.Connection, row) -> list[sqlite3.Row]:
-    """The schedules that cover a device: its own, and its person's."""
-    return conn.execute("SELECT * FROM schedules WHERE mac = ? OR (mac IS NULL AND person = ?) ORDER BY id",
-                        (row["mac"], row["person"])).fetchall()
+    """The schedules that cover a device: its own, its person's and its groups'."""
+    return conn.execute(
+        "SELECT * FROM schedules WHERE mac = ? OR (mac IS NULL AND group_id IS NULL AND person = ?)"
+        " OR group_id IN (SELECT group_id FROM group_members WHERE mac = ?) ORDER BY id",
+        (row["mac"], row["person"], row["mac"])).fetchall()
 
 
 def running_for(conn: sqlite3.Connection, row, now: int) -> int | None:
@@ -130,14 +135,18 @@ def clean(body: dict, people: list[str], conn: sqlite3.Connection) -> dict:
     unknown = set(body) - set(FIELDS)
     if unknown:
         raise ValueError(f"unknown field {sorted(unknown)[0]!r}")
-    mac, person = body.get("mac"), body.get("person")
-    if (mac is None) == (person is None):
-        raise ValueError("a schedule is for a device (mac) or a person, not both")
+    mac, person, group = body.get("mac"), body.get("person"), body.get("group")
+    if [mac, person, group].count(None) != 2:
+        raise ValueError("a schedule is for one device (mac), person or group")
     if mac is not None:
         if not (isinstance(mac, str) and MAC.fullmatch(mac)):
             raise ValueError("mac must be a MAC address")
         if conn.execute("SELECT 1 FROM devices WHERE mac = ?", (mac,)).fetchone() is None:
             raise ValueError("unknown device")
+    elif group is not None:
+        if not (isinstance(group, int) and not isinstance(group, bool)
+                and conn.execute("SELECT 1 FROM device_groups WHERE id = ?", (group,)).fetchone()):
+            raise ValueError("group must be one of the groups")
     elif person not in people:
         raise ValueError("person must be someone on the people list")
     days = body.get("days")
@@ -152,16 +161,17 @@ def clean(body: dict, people: list[str], conn: sqlite3.Connection) -> dict:
     enabled = body.get("enabled", True)
     if not isinstance(enabled, bool):
         raise ValueError("enabled must be true or false")
-    return {"mac": mac, "person": person, "days": "".join(str(d) for d in sorted(set(days))),
+    return {"mac": mac, "person": person, "group_id": group, "days": "".join(str(d) for d in sorted(set(days))),
             "start": body["start"], "end": body["end"], "enabled": int(enabled)}
 
 
 def to_json(conn: sqlite3.Connection, s, now: int, listed: frozenset[str]) -> dict:
     devices = targets(conn, s)
     w = next_window(s, now)
+    group = s["group_id"] is not None and conn.execute("SELECT name FROM device_groups WHERE id = ?", (s["group_id"],)).fetchone()
     return {
-        "id": s["id"], "mac": s["mac"], "person": s["person"],
-        "name": s["person"] or (db.display_name(devices[0]) if devices else s["mac"]),
+        "id": s["id"], "mac": s["mac"], "person": s["person"], "group": s["group_id"],
+        "name": group["name"] if group else s["person"] or (db.display_name(devices[0]) if devices else s["mac"]),
         "days": [int(c) for c in s["days"]], "start": s["start"], "end": s["end"],
         "enabled": bool(s["enabled"]), "skip_until": s["skip_until"],
         "running": bool(w and w[0] <= now), "next": list(w) if w else None,
@@ -179,7 +189,7 @@ def save(conn: sqlite3.Connection, sid: int | None, cols: dict) -> int:
     if sid is None:
         if conn.execute("SELECT COUNT(*) FROM schedules").fetchone()[0] >= MAX_SCHEDULES:
             raise ValueError(f"at most {MAX_SCHEDULES} schedules")
-        sid = conn.execute("INSERT INTO schedules (mac, person, days, start, end, enabled) VALUES (?, ?, ?, ?, ?, ?)",
+        sid = conn.execute(f"INSERT INTO schedules ({', '.join(cols)}) VALUES ({', '.join('?' * len(cols))})",
                            tuple(cols.values())).lastrowid
     else:
         # Editing starts it afresh, so a skip made for the old times doesn't hang around.

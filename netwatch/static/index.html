@@ -204,7 +204,7 @@
           border-radius: 8px; padding: 6px 10px; cursor: pointer; }
   .pick:hover, .pick.active { border-color: var(--accent); }
   .pick .sub { display: block; }
-  #merge-search { font: inherit; width: 100%; padding: 6px 8px; border: 1px solid var(--border); border-radius: 7px;
+  #merge-search, #group-search { font: inherit; width: 100%; padding: 6px 8px; border: 1px solid var(--border); border-radius: 7px;
                   background: var(--bg); color: var(--text); }
   dialog textarea { font: inherit; width: 100%; padding: 6px 8px; border: 1px solid var(--border); border-radius: 7px;
                     background: var(--bg); color: var(--text); }
@@ -212,10 +212,11 @@
   .pz-group:first-child { border-top: 0; padding-top: 0; }
   .pz-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 4px; }
   .pz-head strong { margin-right: auto; }
+  .pz-members { padding-left: 12px; }
   .pz-row { display: flex; align-items: center; gap: 10px; padding: 5px 0 5px 12px; }
   .pz-row .what { flex: 1; min-width: 0; }
-  .pz-row a, .sched-row a { color: inherit; text-decoration: none; }
-  .pz-row a:hover, .sched-row a:hover { color: var(--accent); }
+  .pz-row a, .sched-row a, .pz-members a { color: inherit; text-decoration: none; }
+  .pz-row a:hover, .sched-row a:hover, .pz-members a:hover { color: var(--accent); }
   .sched-row { display: flex; align-items: center; gap: 8px; padding: 8px 0; border-top: 1px solid var(--border); flex-wrap: wrap; }
   .sched-row:first-child { border-top: 0; }
   .sched-row .what { flex: 1; min-width: 200px; }
@@ -326,6 +327,13 @@
     </section>
     <section class="panel" style="margin-top:16px">
       <div class="speed-head">
+        <h2>Groups</h2>
+        <button class="btn" id="pz-add-group">New group</button>
+      </div>
+      <div id="pz-groups"></div>
+    </section>
+    <section class="panel" style="margin-top:16px">
+      <div class="speed-head">
         <h2>Schedules</h2>
         <button class="btn primary" id="pz-add">Add schedule</button>
       </div>
@@ -339,9 +347,10 @@
         NetWatch only takes devices out of the block list that it put there.</p>
       <p class="hint" style="font-size:13px">Only devices allowed to be paused are here. To add one, open its page
         and choose <strong>Allow pausing</strong>. Anyone at home can pause these devices, but allowing a device,
-        changing schedules and resuming early take the PIN. A schedule for a person covers each of their devices
-        that's allowed to be paused, including ones added later. A device resumed early stays unpaused until that
-        night's schedule ends.</p>
+        changing groups and schedules, and resuming early take the PIN. A schedule for a person or a group covers each
+        of its devices that's allowed to be paused, including ones added later. A group can hold any device, and a
+        device can be in several groups, but only devices allowed to be paused are paused. A device resumed early
+        stays unpaused until that night's schedule ends.</p>
       <div class="btns"><button class="btn" id="pz-forget" hidden>Forget the PIN on this device</button></div>
       <div class="status" id="pz-status"></div>
     </section>
@@ -601,6 +610,28 @@
       <button class="btn" id="sched-delete" hidden>Delete</button>
     </div>
     <div class="status" id="sched-status"></div>
+  </div>
+</dialog>
+
+<dialog id="group-dlg">
+  <div class="dlg-head">
+    <h2 id="group-title">Group</h2>
+    <button class="x" id="group-close" aria-label="Close">×</button>
+  </div>
+  <div class="dlg-body">
+    <div class="form" style="margin-top:10px">
+      <label for="group-name">Name</label>
+      <input type="text" id="group-name" maxlength="40" placeholder="Family devices">
+    </div>
+    <p class="hint" style="margin-top:10px">Tick the devices to pause together. Devices that aren't allowed to be
+      paused can be in the group, but aren't paused until you choose Allow pausing on their page.</p>
+    <input type="search" id="group-search" placeholder="Search names, rooms, people…" aria-label="Search devices">
+    <div class="picks" id="group-picks"></div>
+    <div class="btns" style="margin-top:12px">
+      <button class="btn primary" id="group-save">Save</button>
+      <button class="btn" id="group-delete" hidden>Delete group</button>
+    </div>
+    <div class="status" id="group-status"></div>
   </div>
 </dialog>
 
@@ -1221,7 +1252,7 @@ function renderDetail() {
   // Rebuilt only for a different device or after saving, so the 30 s refresh can't wipe what you're typing.
   if (formMac !== d.mac) renderAbout(d);
 
-  renderDevicePausing(d, detail.schedules);
+  renderDevicePausing(d, detail.schedules, detail.groups);
   renderHistory(h);
   renderUsage(detail.usage, detail.usage_totals);
   renderPorts(detail.ports, detail.ports_scanned);
@@ -2033,11 +2064,13 @@ function scheduleRow(s, now) {
   skip.onclick = () => changeSchedule(`/api/schedules/${s.id}/skip`, { skip: !skipping });
   const toggle = el("button", { className: "btn", textContent: s.enabled ? "Switch off" : "Switch on" });
   toggle.onclick = () => changeSchedule(`/api/schedules/${s.id}`, {
-    [s.mac ? "mac" : "person"]: s.mac || s.person, days: s.days, start: s.start, end: s.end, enabled: !s.enabled });
+    ...schedTarget(s), days: s.days, start: s.start, end: s.end, enabled: !s.enabled });
   const usable = s.devices.filter((x) => x.pausable);
-  const covers = s.person
-    ? (usable.length ? usable.map((x) => x.name).join(", ") : `None of ${s.person}'s devices are allowed to be paused yet.`)
-    : usable.length ? "" : "This device isn't allowed to be paused any more.";
+  const covers = s.mac
+    ? (usable.length ? "" : "This device isn't allowed to be paused any more.")
+    : usable.length ? usable.map((x) => x.name).join(", ")
+    : s.person ? `None of ${s.person}'s devices are allowed to be paused yet.`
+    : "None of this group's devices are allowed to be paused yet.";
   const state = scheduleState(s, now);
   return el("div", { className: "sched-row" + (s.enabled ? "" : " off") },
     el("div", { className: "what" },
@@ -2046,6 +2079,11 @@ function scheduleRow(s, now) {
       state ? el("div", { className: "sub" + (s.running ? " running" : ""), textContent: state }) : null,
       covers ? el("div", { className: "sub", textContent: covers }) : null),
     skip, toggle, edit);
+}
+
+// What a schedule is for, as the server takes it.
+function schedTarget(s) {
+  return s.mac ? { mac: s.mac } : s.group != null ? { group: s.group } : { person: s.person };
 }
 
 async function changeSchedule(url, body) {
@@ -2077,6 +2115,7 @@ function renderPausing() {
   $("pz-setup").hidden = !setup;
   $("pz-setup").textContent = setup;
   $("pz-add").disabled = !p.pin_set;
+  $("pz-add-group").disabled = !p.pin_set;
   $("pz-forget").hidden = !savedPin();
 
   // Each person with devices that can be paused, then the devices nobody's down for.
@@ -2106,15 +2145,47 @@ function renderPausing() {
     return el("div", { className: "pz-group" }, head, ...list.map(deviceRow));
   }) : [el("div", { className: "empty", textContent: "No devices can be paused yet. Open a device's page and choose Allow pausing." })]));
 
+  $("pz-groups").replaceChildren(...(p.groups.length ? p.groups.map(groupBlock)
+    : [el("div", { className: "empty", textContent: "No groups yet. A group is a set of devices, say the family TV and "
+      + "speakers, to pause together or put on one schedule." })]));
+
   $("pz-schedules").replaceChildren(...(p.schedules.length ? p.schedules.map((s) => scheduleRow(s, p.now))
     : [el("div", { className: "empty", textContent: "No schedules yet." })]));
 }
 
+function groupBlock(g) {
+  const head = el("div", { className: "pz-head" }, el("strong", { textContent: g.name }));
+  if (g.devices.some((x) => x.pausable)) {
+    const all = el("button", { className: "btn", textContent: "⏸ Pause all" });
+    all.onclick = () => openPauseDialog(g.name, `/api/groups/${g.id}/pause`, {}, applyPause);
+    head.append(all);
+  }
+  if (g.devices.some((x) => x.paused)) {
+    const resume = el("button", { className: "btn primary", textContent: "▶ Resume all" });
+    resume.onclick = async () => {
+      resume.disabled = true;
+      try { applyPause(await post(`/api/groups/${g.id}/resume`, {})); }
+      catch (e) { showError("Couldn't resume: " + e.message); resume.disabled = false; }
+    };
+    head.append(resume);
+  }
+  const edit = el("button", { className: "btn", textContent: "Edit" });
+  edit.disabled = !pausing.pin_set;
+  edit.onclick = () => openGroup(g);
+  head.append(edit);
+  const list = g.devices.length ? g.devices.map((x, i) => [i ? ", " : "",
+    el("a", { href: "#/device/" + x.mac, textContent: x.name }),
+    x.paused ? " ⏸" : "", x.pausable ? "" : " (not allowed to be paused)"]).flat()
+    : ["No devices in it yet."];
+  return el("div", { className: "pz-group" }, head, el("div", { className: "sub pz-members" }, ...list));
+}
+
 $("pz-add").onclick = () => openSchedule(null);
+$("pz-add-group").onclick = () => openGroup(null);
 $("pz-forget").onclick = () => { forgetPin(); $("pz-forget").hidden = true; $("pz-status").textContent = "Forgotten ✓"; };
 
 // The device page's Pausing panel: whether it can be paused, and the schedules that cover it.
-function renderDevicePausing(d, schedules) {
+function renderDevicePausing(d, schedules, groups = []) {
   const panel = $("d-pausing-panel");
   panel.hidden = !settings || !settings.pihole_configured || d.router;
   if (panel.hidden) return;
@@ -2132,9 +2203,14 @@ function renderDevicePausing(d, schedules) {
       ? "Can be paused while it's still to review. Allow pausing to keep it pausable, and to schedule it."
       : "Not allowed to be paused. Allowing it takes the PIN." }), allow);
   }
+  if (groups.length) {
+    parts.push(el("div", { className: "sub", style: "margin-top:6px" }, (groups.length > 1 ? "In the groups " : "In the group ")
+      + groups.join(", ") + (canBePaused(d) ? "." : ", but not paused with them until it's allowed to be.")));
+  }
   if (schedules.length) {
     parts.push(...schedules.map((s) => el("div", { className: "sub", style: "margin-top:6px" },
-      el("a", { href: "#/pausing", textContent: (s.person ? s.person + "'s schedule" : "Schedule") }),
+      el("a", { href: "#/pausing", textContent: s.person ? s.person + "'s schedule"
+        : s.group != null ? s.name + " schedule" : "Schedule" }),
       `: ${daysText(s.days)}, ${hm(s.start)} – ${hm(s.end)}. ${scheduleState(s, now)}`)));
   }
   if (canBePaused(d)) {
@@ -2175,14 +2251,16 @@ async function openSchedule(s, mac = null) {
   if (!pausing) return;
   schedEditing = s;
   const target = $("sched-target");
+  const groups = el("optgroup", { label: "A group" }, ...pausing.groups.map((g) => el("option", { value: "group:" + g.id, textContent: g.name })));
   const people = el("optgroup", { label: "Everything of…" }, ...pausing.people.map((p) => el("option", { value: "person:" + p, textContent: p })));
   const list = pausing.devices.filter(canBePaused);
   if (s && s.mac && !list.some((d) => d.mac === s.mac)) list.push({ mac: s.mac, name: s.name });
   const devs = el("optgroup", { label: "One device" }, ...list.map((d) => el("option", { value: "mac:" + d.mac, textContent: d.name })));
-  target.replaceChildren(people, devs);
-  // A new one starts on the first person who has something to pause.
+  target.replaceChildren(...(pausing.groups.length ? [groups] : []), people, devs);
+  // A new one starts on the first group, or else the first person who has something to pause.
   const someone = pausing.people.find((p) => list.some((d) => d.person === p));
-  target.value = s ? (s.mac ? "mac:" + s.mac : "person:" + s.person) : mac ? "mac:" + mac
+  const [key, value] = s ? Object.entries(schedTarget(s))[0] : [];
+  target.value = s ? `${key}:${value}` : mac ? "mac:" + mac : pausing.groups.length ? "group:" + pausing.groups[0].id
     : someone ? "person:" + someone : target.options[0]?.value;
   schedDays = new Set(s ? s.days : [6, 0, 1, 2, 3]);
   renderSchedDays();
@@ -2211,13 +2289,78 @@ $("sched-save").onclick = () => {
   if (!value) return void ($("sched-status").textContent = "Choose who or what to pause.");
   const s = schedEditing;
   saveSchedule(s ? `/api/schedules/${s.id}` : "/api/schedules", {
-    [kind]: value, days: [...schedDays].sort(), start: $("sched-start").value, end: $("sched-end").value,
+    [kind]: kind === "group" ? Number(value) : value, days: [...schedDays].sort(), start: $("sched-start").value, end: $("sched-end").value,
     enabled: s ? s.enabled : true,
   });
 };
 $("sched-delete").onclick = () => saveSchedule(`/api/schedules/${schedEditing.id}/delete`, {});
 $("sched-close").onclick = () => $("sched-dlg").close();
 $("sched-dlg").onclick = (e) => { if (e.target === $("sched-dlg")) $("sched-dlg").close(); };
+
+// ---- the group dialog
+let groupEditing = null, groupMacs = new Set(), groupOrder = [];
+
+function renderGroupPicks() {
+  const q = $("group-search").value.trim().toLowerCase();
+  const list = groupOrder.filter((x) => !q || [x.name, x.hostname, x.vendor, x.mac, x.floor, x.room, x.person]
+    .some((v) => v && v.toLowerCase().includes(q)));
+  $("group-picks").replaceChildren(...list.map((x) => {
+    const box = el("input", { type: "checkbox", checked: groupMacs.has(x.mac) });
+    box.onchange = () => { box.checked ? groupMacs.add(x.mac) : groupMacs.delete(x.mac); };
+    const about = [x.person, x.room, canBePaused(x) ? "" : "not allowed to be paused"].filter(Boolean).join(" · ");
+    return el("label", { className: "row" }, box,
+      el("span", {}, (KINDS[x.kind] ? KINDS[x.kind][0] + " " : "") + x.name,
+        about ? el("div", { className: "hint", textContent: about }) : null));
+  }));
+  if (!list.length) $("group-picks").append(el("div", { className: "empty", textContent: "No matching devices." }));
+}
+
+function openGroup(g) {
+  groupEditing = g;
+  groupMacs = new Set(g ? g.devices.map((x) => x.mac) : []);
+  // Its devices first, then the ones that can be paused, then the rest; the order stays put while you tick.
+  groupOrder = devices.filter((x) => !x.router).sort((a, b) => (groupMacs.has(b.mac) - groupMacs.has(a.mac))
+    || (canBePaused(b) - canBePaused(a)) || a.name.localeCompare(b.name));
+  $("group-title").textContent = g ? "Edit group" : "New group";
+  $("group-name").value = g ? g.name : "";
+  $("group-search").value = "";
+  $("group-delete").hidden = !g;
+  $("group-delete").textContent = "Delete group";
+  $("group-status").textContent = "";
+  renderGroupPicks();
+  $("group-dlg").showModal();
+  if (!g) $("group-name").focus();
+}
+
+async function saveGroup(url, body) {
+  $("group-status").textContent = "Saving…";
+  try {
+    pausing = await post(url, body);
+    $("group-dlg").close();
+    $("pz-status").textContent = pausing.warning || "";
+    if (location.hash === "#/pausing") renderPausing();
+    refresh();
+  } catch (e) { $("group-status").textContent = "Not saved: " + e.message; }
+}
+
+$("group-search").oninput = renderGroupPicks;
+$("group-save").onclick = () => {
+  const name = $("group-name").value.trim();
+  if (!name) return void ($("group-status").textContent = "Give it a name.");
+  const g = groupEditing;
+  saveGroup(g ? `/api/groups/${g.id}` : "/api/groups", { name, macs: [...groupMacs] });
+};
+$("group-delete").onclick = () => {
+  const g = groupEditing, n = pausing.schedules.filter((s) => s.group === g.id).length;
+  // Its schedules go with it, so ask once more when it has any.
+  if (n && $("group-delete").textContent === "Delete group") {
+    $("group-delete").textContent = `Delete it and its ${n === 1 ? "schedule" : n + " schedules"}`;
+    return;
+  }
+  saveGroup(`/api/groups/${g.id}/delete`, {});
+};
+$("group-close").onclick = () => $("group-dlg").close();
+$("group-dlg").onclick = (e) => { if (e.target === $("group-dlg")) $("group-dlg").close(); };
 
 $("security-pill").onclick = () => { location.hash = "#/security"; };
 document.querySelectorAll(".sec-link").forEach((a) => a.onclick = () => $("alerts").close());

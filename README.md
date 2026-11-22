@@ -23,7 +23,8 @@ netwatch/
   usage.py     each device's internet use, from the Deco's live speeds
   presence.py  who's home, from each person's phones
   security.py  router impersonation, IP conflicts, rogue DHCP servers
-  schedule.py  pause schedules: a device or a person's devices, at set times each week
+  groups.py    device groups: a named set of devices to pause together
+  schedule.py  pause schedules: a device, or a person's or group's devices, at set times each week
   web.py       dashboard server (stdlib only) + JSON API
   static/      dashboard page
   __main__.py  CLI: run | scan | devices | portscan | speedtest | events | label | web
@@ -95,7 +96,7 @@ what it is. The server refuses to pause anything else. A device is allowed if it
 `pausable` in the `[pihole]` config section, or if you choose **Allow pausing** on its page.
 
 **The PIN.** Set `pin` in the `[pihole]` section. Anyone on the LAN can use the dashboard, so these
-take the PIN: allowing a device to be paused (or stopping it), adding or changing schedules,
+take the PIN: allowing a device to be paused (or stopping it), adding or changing groups and schedules,
 resuming a paused device early, moving a pausable device to another person, and merging one away
 with "Same device as…". Pausing doesn't. The browser can remember the PIN ("Forget the PIN on this
 device" on the Pausing page). Five wrong PINs in a row lock it for 15 minutes and send an alert.
@@ -104,7 +105,12 @@ Without a PIN, Allow pausing and schedules are off, and resuming works without o
 **The Pausing page** (⏸ in the header) lists the devices that can be paused, grouped by person,
 with **Pause all** / **Resume all** for each person.
 
-**Schedules** pause a device, or every pausable device of a person, at set times on chosen days:
+**Groups** are named sets of devices to pause together, say "Family devices" for the TV and the
+speakers: **Pause all** / **Resume all** for each, and schedules can target one. A group can hold
+any device and a device can be in several, keeping its person, but only devices allowed to be paused
+are ever paused: being in a group doesn't make a device pausable. Deleting a group deletes its schedules.
+
+**Schedules** pause a device, or every pausable device of a person or group, at set times on chosen days:
 say Sun–Thu 9 PM to 7 AM (an end before the start means the next morning). The scanner starts and
 ends them within a minute, by the server's clock; saving a schedule applies it at once. A person's
 schedule covers devices they're given later too. **Skip next** (or **Stop this one** while it's

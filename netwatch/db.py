@@ -84,16 +84,28 @@ CREATE TABLE IF NOT EXISTS speedtests (
 );
 CREATE INDEX IF NOT EXISTS speedtests_ts ON speedtests(ts);
 
--- When to pause devices (schedule.py). Each targets one device or one person's pausable devices.
+-- When to pause devices (schedule.py). Each targets one device, or one person's or group's pausable devices.
 CREATE TABLE IF NOT EXISTS schedules (
     id         INTEGER PRIMARY KEY,
-    mac        TEXT,              -- the device, or NULL when it's for a person
+    mac        TEXT,              -- the device, or NULL when it's for a person or group
     person     TEXT,
+    group_id   INTEGER,
     days       TEXT NOT NULL,     -- the weekdays it starts on, as digits: 0 = Monday ... 6 = Sunday
     start      TEXT NOT NULL,     -- "HH:MM" local time
     end        TEXT NOT NULL,     -- "HH:MM"; earlier than start means the next morning
     enabled    INTEGER NOT NULL DEFAULT 1,
     skip_until INTEGER            -- "Skip tonight": not before this unix time
+);
+
+-- Named sets of devices to pause together (groups.py). A device can be in several.
+CREATE TABLE IF NOT EXISTS device_groups (
+    id   INTEGER PRIMARY KEY,
+    name TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS group_members (
+    group_id INTEGER NOT NULL,
+    mac      TEXT NOT NULL,
+    PRIMARY KEY (group_id, mac)
 );
 
 CREATE TABLE IF NOT EXISTS settings (
@@ -125,6 +137,9 @@ ADDED_COLUMNS = {
     "person": "TEXT",
     "notes": "TEXT",
 }
+ADDED_SCHEDULE_COLUMNS = {
+    "group_id": "INTEGER",
+}
 
 
 def connect(path: str | Path) -> sqlite3.Connection:
@@ -135,16 +150,21 @@ def connect(path: str | Path) -> sqlite3.Connection:
     # WAL lets the dashboard read while the scanner writes.
     conn.execute("PRAGMA journal_mode=WAL")
     conn.executescript(SCHEMA)
-    existing = {r["name"] for r in conn.execute("PRAGMA table_info(devices)")}
-    for column, decl in ADDED_COLUMNS.items():
+    _add_columns(conn, "devices", ADDED_COLUMNS)
+    _add_columns(conn, "schedules", ADDED_SCHEDULE_COLUMNS)
+    return conn
+
+
+def _add_columns(conn: sqlite3.Connection, table: str, columns: dict[str, str]) -> None:
+    existing = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}
+    for column, decl in columns.items():
         if column not in existing:
             try:
-                conn.execute(f"ALTER TABLE devices ADD COLUMN {column} {decl}")
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
             except sqlite3.OperationalError as e:
                 # Another connection (scanner or a parallel dashboard request) added it first.
                 if "duplicate column" not in str(e):
                     raise
-    return conn
 
 
 def display_name(row: sqlite3.Row) -> str:

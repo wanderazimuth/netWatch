@@ -84,6 +84,9 @@ def merge(conn, old: str, new: str) -> None:
     conn.execute("UPDATE events SET mac = ? WHERE mac = ?", (new, old))
     conn.execute("UPDATE traffic SET mac = ? WHERE mac = ?", (new, old))
     conn.execute("UPDATE schedules SET mac = ? WHERE mac = ?", (new, old))
+    conn.execute("INSERT OR IGNORE INTO group_members (group_id, mac) SELECT group_id, ? FROM group_members WHERE mac = ?",
+                 (new, old))
+    conn.execute("DELETE FROM group_members WHERE mac = ?", (old,))
     # Open ports belong to the old address; the new one gets its own scan.
     conn.execute("DELETE FROM ports WHERE mac = ?", (old,))
     conn.execute("DELETE FROM devices WHERE mac = ?", (old,))
