@@ -23,6 +23,9 @@ class FakeAdmin:
     def ensure_pause_group(self):
         return PAUSE_GID
 
+    def all_clients(self):
+        return dict(self.clients)
+
     def get_client(self, client):
         return self.clients.get(client)
 
@@ -31,6 +34,24 @@ class FakeAdmin:
 
     def delete_client(self, client):
         del self.clients[client]
+
+
+class ReconcileTest(unittest.TestCase):
+    def setUp(self):
+        self.conn = db.connect(":memory:")
+        apply_scan(self.conn, [Sighting(TV, "192.168.0.20"), Sighting("00:11:22:33:44:99", "192.168.0.21")], 1000, 600)
+
+    def test_puts_back_lost_pause_and_drops_leftovers(self):
+        own = {"groups": [0], "comment": "Office PC"}
+        admin = FakeAdmin()
+        pause.pause(self.conn, admin, TV, None)
+        self.assertFalse(pause.reconcile(self.conn, admin))
+        # Something rewrote Pi-hole: the TV's pause went, and a resumed device's came back.
+        admin.clients = {"192.168.0.21": {"groups": [PAUSE_GID], "comment": pause.COMMENT}, "192.168.0.50": own}
+        self.assertTrue(pause.reconcile(self.conn, admin))
+        self.assertEqual(admin.clients, {"192.168.0.20": {"groups": [PAUSE_GID], "comment": pause.COMMENT},
+                                         "192.168.0.50": own})  # entries NetWatch didn't make are left alone
+        self.assertFalse(pause.reconcile(self.conn, admin))
 
 
 class PauseTest(unittest.TestCase):

@@ -67,6 +67,11 @@ def scan_once(cfg: config_mod.Config, conn, deco: Deco | None = None) -> list[tr
     return events
 
 
+# How often to check Pi-hole's pause entries against the database, in case something undid one.
+RECONCILE_EVERY = 5 * 60
+reconcile_at = {"next": 0.0}
+
+
 def maintain_pauses(cfg: config_mod.Config, conn) -> None:
     """End expired pauses, follow paused devices to new IPs, start and end scheduled pauses,
     and keep the Deco's block list in step."""
@@ -79,6 +84,10 @@ def maintain_pauses(cfg: config_mod.Config, conn) -> None:
             with session() as admin:
                 changed = pause.maintain(conn, admin, int(time.time()))
         changed = schedule.run(conn, session, int(time.time()), frozenset(cfg.pihole.pausable)) or changed
+        if time.monotonic() >= reconcile_at["next"]:
+            reconcile_at["next"] = time.monotonic() + RECONCILE_EVERY
+            with session() as admin:
+                changed = pause.reconcile(conn, admin) or changed
     except Exception:
         log.warning("updating paused devices in Pi-hole failed; will retry", exc_info=True)
     if changed:

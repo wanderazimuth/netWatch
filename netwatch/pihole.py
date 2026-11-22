@@ -107,6 +107,11 @@ class PiholeAdmin:
                        {"groups": sorted(set(rule["groups"]) | {gid}), **body})
         return gid
 
+    def all_clients(self) -> dict[str, dict]:
+        """Every client entry: client -> {"groups": [...], "comment": ...}."""
+        return {c["client"]: {"groups": c.get("groups", []), "comment": c.get("comment")}
+                for c in self._call("GET", "/api/clients").get("clients", [])}
+
     def get_client(self, client: str) -> dict | None:
         found = self._call("GET", f"/api/clients/{quote(client, safe='')}").get("clients", [])
         return found[0] if found else None

@@ -113,6 +113,32 @@ def maintain(conn: sqlite3.Connection, admin, now: int) -> bool:
     return changed
 
 
+def reconcile(conn: sqlite3.Connection, admin) -> bool:
+    """Make Pi-hole's pause entries match the database: drop ones for devices that aren't paused,
+    and put back missing or changed ones. Returns True if Pi-hole changed.
+
+    Something else rewriting Pi-hole's database can undo a pause or a resume: a gravity run started
+    by the NAS sync did, putting back a resumed device's entry (2026-11-22).
+    """
+    entries = admin.all_clients()
+    paused = {r["paused_ip"]: r for r in conn.execute("SELECT * FROM devices WHERE paused_ip IS NOT NULL")}
+    changed = False
+    for client, entry in entries.items():
+        if entry.get("comment") == COMMENT and client not in paused:
+            admin.delete_client(client)
+            log.warning("removed a leftover Pi-hole pause for %s: nothing paused there", client)
+            changed = True
+    gid = None
+    for ip, row in paused.items():
+        entry = entries.get(ip)
+        if entry is None or entry.get("comment") != COMMENT:
+            gid = gid if gid is not None else admin.ensure_pause_group()
+            admin.save_client(ip, [gid], COMMENT)
+            log.warning("put back the Pi-hole pause for %s (%s): it had gone", db.display_name(row), ip)
+            changed = True
+    return changed
+
+
 # With a Deco, a paused device is also put in the Deco's block list, which cuts all its internet:
 # that catches devices that skip Pi-hole, like Google speakers with their own DNS servers. Pausing
 # and resuming only change the database; sync_deco then brings the block list in line, from the
