@@ -333,9 +333,10 @@
     </section>
     <section class="panel" style="margin-top:16px">
       <h2>How it works</h2>
-      <p class="hint" style="font-size:13px">A paused device can't look anything up through Pi-hole, so the
-        internet stops working on it within a minute or two. Apps that are already connected may carry on until
-        they reconnect, and a device set to use its own DNS server (on Android, Private DNS) isn't affected.</p>
+      <p class="hint" style="font-size:13px">A paused device goes in the Deco's block list (Blocked Clients in
+        the Deco app), which cuts all its internet but leaves it on the Wi-Fi, and Pi-hole blocks its DNS
+        lookups too. That catches devices that skip Pi-hole, like Google speakers with their own DNS servers.
+        NetWatch only takes devices out of the block list that it put there.</p>
       <p class="hint" style="font-size:13px">Only devices allowed to be paused are here. To add one, open its page
         and choose <strong>Allow pausing</strong>. Anyone at home can pause these devices, but allowing a device,
         changing schedules and resuming early take the PIN. A schedule for a person covers each of their devices
@@ -546,11 +547,12 @@
     <button class="x" id="pause-close" aria-label="Close">×</button>
   </div>
   <div class="dlg-body">
-    <p>Block all internet lookups for <strong id="pause-name"></strong>:</p>
+    <p>Block the internet for <strong id="pause-name"></strong>:</p>
     <div class="btns" id="pause-options"></div>
-    <div class="hint" style="margin-top:10px">Works through Pi-hole, so it takes effect within a minute or two.
-      Apps that are already connected may keep working until they reconnect, and a device set to use
-      its own DNS server isn't affected.</div>
+    <div class="hint" style="margin-top:10px">Blocks it in the Deco (all its internet, as Blocked Clients in
+      the Deco app does) and in Pi-hole (its DNS lookups). Without a Deco set up, only Pi-hole blocks it:
+      apps that are already connected may keep working until they reconnect, and a device with its own
+      DNS server isn't affected.</div>
     <div class="status" id="pause-status"></div>
   </div>
 </dialog>
@@ -1050,10 +1052,12 @@ document.querySelectorAll("th[data-k]").forEach((th) => th.onclick = () => {
 // ---- pause internet (Pi-hole)
 function pausedText(d) {
   if (!d.paused) return "";
-  if (!d.paused_until) return "Internet paused until you resume it";
+  // With a Deco, the block there is what stops devices that skip Pi-hole; until it's in, say so.
+  const how = settings && settings.deco_configured && !d.deco_blocked ? " (Pi-hole only so far: the Deco block is pending)" : "";
+  if (!d.paused_until) return "Internet paused until you resume it" + how;
   const until = new Date(d.paused_until * 1000);
   const sameDay = until.toDateString() === new Date().toDateString();
-  return "Internet paused until " + (sameDay ? clock(d.paused_until) : until.toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" }));
+  return "Internet paused until " + (sameDay ? clock(d.paused_until) : until.toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" })) + how;
 }
 
 function pauseButton(d) {
@@ -1068,6 +1072,7 @@ function pauseButton(d) {
 }
 
 function applyPause(r) {
+  if (r.warning) showError(r.warning);
   if (r.device && detail && detail.device.mac === r.device.mac) detail.device = r.device;
   renderDetail();
   refresh();

@@ -115,7 +115,14 @@ regex rule (`.*`), and points a client entry for the device's IP at it. Resume
 puts back whatever client entry that IP had before. Timed pauses end on their
 own, and if a paused device gets a new IP the pause moves with it.
 
-It's DNS-only: apps that are already connected keep working until they look
+**With a Deco** (the `[deco]` section), a paused device also goes in the Deco's block list,
+Blocked Clients in the Deco app: it stays on the Wi-Fi but gets no internet at all. That catches
+devices that skip Pi-hole, like Google speakers with their own DNS servers. The block is by MAC,
+through the Deco's unofficial local API (the `black_list` form, checked on a W7200). The dashboard
+updates it straight away and the scanner keeps it in step every minute, retrying with a backoff if
+the Deco can't be reached. NetWatch only unblocks devices it blocked itself.
+
+**Without a Deco** it's DNS-only: apps that are already connected keep working until they look
 something up again, and a device set to use its own DNS server isn't affected.
 Pauses are by IP rather than MAC because a Pi-hole in Docker (like the NAS
 replica) can't see MACs.

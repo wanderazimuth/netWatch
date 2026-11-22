@@ -20,6 +20,7 @@ from importlib import resources
 from urllib.parse import parse_qs, urlparse
 
 from . import db, inventory, notify, tracker
+from . import deco as deco_mod
 from . import pause as pause_mod
 from . import presence
 from . import schedule as schedule_mod
@@ -31,7 +32,7 @@ from .pihole import PiholeClient
 from .scanner import default_gateway, is_randomized_mac
 
 if TYPE_CHECKING:
-    from .config import PiholeConfig  # config imports tomllib, which the dashboard doesn't otherwise need
+    from .config import DecoConfig, PiholeConfig  # config imports tomllib, which the dashboard doesn't otherwise need
 
 log = logging.getLogger(__name__)
 
@@ -78,6 +79,7 @@ def device_json(r, pausable: frozenset[str] = frozenset(), gateway: str | None =
         "paused": r["paused_ip"] is not None,
         "paused_until": r["paused_until"],
         "paused_by": r["paused_by"],
+        "deco_blocked": r["deco_blocked"] is not None,
         "pausable": can_pause(r, pausable, gateway),
         "pause_allowed": bool(r["pause_allowed"]),
         "pause_listed": r["mac"] in pausable,
@@ -171,7 +173,7 @@ def dns_summary(result: dict) -> dict:
 
 
 def make_handler(db_path: str, ntfy_url: str = "", dashboard_url: str = "",
-                 pihole: PiholeConfig | None = None, offline_after: int = 600):
+                 pihole: PiholeConfig | None = None, offline_after: int = 600, deco: DecoConfig | None = None):
     static = resources.files("netwatch").joinpath("static")
     index_html = static.joinpath("index.html").read_bytes()
     pausable = frozenset(pihole.pausable) if pihole is not None else frozenset()
@@ -386,6 +388,7 @@ def make_handler(db_path: str, ntfy_url: str = "", dashboard_url: str = "",
 
         def _settings(self, conn) -> dict:
             return {**settings_mod.load(conn), "ntfy_configured": bool(ntfy_url), "pihole_configured": pihole is not None,
+                    "deco_configured": deco is not None,
                     "floors": inventory.FLOORS, "kinds": inventory.KINDS, "now": int(time.time())}
 
         def _review(self, conn, mac: str, body: dict):
@@ -521,8 +524,9 @@ def make_handler(db_path: str, ntfy_url: str = "", dashboard_url: str = "",
                 log.warning("Pi-hole %s failed", action, exc_info=True)
                 return self._json({"error": f"Pi-hole {action} failed: {e}"}, 502)
             pause_mod.touch(pihole.sync_trigger)
+            warning = self._sync_deco(conn)
             row = conn.execute("SELECT * FROM devices WHERE mac = ?", (mac,)).fetchone()
-            return self._json({"ok": True, "device": device_json(row, pausable, gateway)})
+            return self._json({"ok": True, "warning": warning, "device": device_json(row, pausable, gateway)})
 
         def _pause_person(self, conn, action: str, body: dict):
             """Pause, or resume, all of a person's devices that can be paused."""
@@ -556,7 +560,7 @@ def make_handler(db_path: str, ntfy_url: str = "", dashboard_url: str = "",
                 log.warning("Pi-hole %s for %s failed", action, person, exc_info=True)
                 return self._json({"error": f"Pi-hole {action} failed: {e}"}, 502)
             pause_mod.touch(pihole.sync_trigger)
-            return self._json({"ok": True, "count": len(rows)})
+            return self._json({"ok": True, "warning": self._sync_deco(conn), "count": len(rows)})
 
         def _apply_schedules(self, conn) -> str | None:
             """Start or end scheduled pauses now, after a change, rather than at the next scan."""
@@ -566,6 +570,18 @@ def make_handler(db_path: str, ntfy_url: str = "", dashboard_url: str = "",
             except Exception:
                 log.warning("applying pause schedules failed", exc_info=True)
                 return "Saved, but Pi-hole couldn't be reached: it takes effect within a minute or two."
+            return self._sync_deco(conn)
+
+        def _sync_deco(self, conn) -> str | None:
+            """Bring the Deco's block list in line with what's paused. The scanner retries if this fails."""
+            if deco is None:
+                return None
+            try:
+                pause_mod.sync_deco(conn, lambda: deco_mod.block_list(deco.url, deco.password_file))
+            except Exception as e:
+                log.warning("Deco block list update failed", exc_info=True)
+                return (f"The Deco couldn't be reached ({e}), so for now this is only through Pi-hole. "
+                        "NetWatch keeps trying every few minutes.")
             return None
 
         def _set_pausable(self, conn, mac: str, body: dict):
@@ -710,7 +726,8 @@ def make_handler(db_path: str, ntfy_url: str = "", dashboard_url: str = "",
 
 
 def serve(db_path: str, host: str, port: int, ntfy_url: str = "", dashboard_url: str = "",
-          pihole: PiholeConfig | None = None, offline_after: int = 600) -> None:
-    server = ThreadingHTTPServer((host, port), make_handler(db_path, ntfy_url, dashboard_url, pihole, offline_after))
+          pihole: PiholeConfig | None = None, offline_after: int = 600, deco: DecoConfig | None = None) -> None:
+    server = ThreadingHTTPServer((host, port), make_handler(db_path, ntfy_url, dashboard_url, pihole, offline_after,
+                                                            deco))
     log.info("dashboard on http://%s:%d", host, port)
     server.serve_forever()

@@ -111,3 +111,43 @@ def maintain(conn: sqlite3.Connection, admin, now: int) -> bool:
             pause(conn, admin, row["mac"], row["paused_until"], row["paused_by"])
             changed = True
     return changed
+
+
+# With a Deco, a paused device is also put in the Deco's block list, which cuts all its internet:
+# that catches devices that skip Pi-hole, like Google speakers with their own DNS servers. Pausing
+# and resuming only change the database; sync_deco then brings the block list in line, from the
+# dashboard straight away and from the scanner every minute (for timed and scheduled pauses, and to
+# retry when the Deco couldn't be reached).
+DECO_OUT_OF_STEP = ("(paused_ip IS NOT NULL AND deco_blocked IS NULL)"
+                    " OR (paused_ip IS NULL AND deco_blocked IS NOT NULL)")
+
+
+def deco_out_of_step(conn: sqlite3.Connection) -> bool:
+    return conn.execute(f"SELECT 1 FROM devices WHERE {DECO_OUT_OF_STEP} LIMIT 1").fetchone() is not None
+
+
+def sync_deco(conn: sqlite3.Connection, block_list) -> bool:
+    """Block paused devices at the Deco and unblock resumed ones. block_list() opens a Deco
+    session (a context manager), only when something needs changing. Returns True if it did.
+
+    A device that was already blocked in the Deco app is left blocked when it's resumed.
+    """
+    rows = conn.execute(f"SELECT * FROM devices WHERE {DECO_OUT_OF_STEP}").fetchall()
+    if not rows:
+        return False
+    with block_list() as deco:
+        blocked = deco.blocked()
+        for r in rows:
+            if r["paused_ip"]:
+                state = 2 if r["mac"] in blocked else 1
+                if state == 1:
+                    deco.block(r["mac"], db.display_name(r))
+                    log.info("blocked %s at the Deco", db.display_name(r))
+            else:
+                if r["deco_blocked"] == 1 and r["mac"] in blocked:
+                    deco.unblock(r["mac"])
+                    log.info("unblocked %s at the Deco", db.display_name(r))
+                state = None
+            conn.execute("UPDATE devices SET deco_blocked = ? WHERE mac = ?", (state, r["mac"]))
+            conn.commit()
+    return True

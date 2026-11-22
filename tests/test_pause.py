@@ -2,8 +2,10 @@ import json
 import os
 import tempfile
 import unittest
+from contextlib import contextmanager
 
 from netwatch import db, pause
+from netwatch.deco import BlockList
 from netwatch.pihole import BLOCK_ALL, PAUSE_GROUP, PiholeAdmin
 from netwatch.scanner import Sighting
 from netwatch.tracker import apply_scan
@@ -145,6 +147,80 @@ class PiholeAdminTest(unittest.TestCase):
         self.assertEqual(admin.get_client("192.168.0.20")["groups"], [0])
         admin.delete_client("192.168.0.20")
         self.assertIsNone(admin.get_client("192.168.0.20"))
+
+
+class FakeBlockList:
+    def __init__(self, blocked=()):
+        self.list = set(blocked)
+        self.calls = []
+
+    def blocked(self):
+        return set(self.list)
+
+    def block(self, mac, name):
+        self.calls.append(("block", mac))
+        self.list.add(mac)
+
+    def unblock(self, mac):
+        self.calls.append(("unblock", mac))
+        self.list.discard(mac)
+
+
+class DecoSyncTest(unittest.TestCase):
+    def setUp(self):
+        self.conn = db.connect(":memory:")
+        apply_scan(self.conn, [Sighting(TV, "192.168.0.20")], 1000, 600)
+        self.admin = FakeAdmin()
+
+    def sync(self, deco):
+        @contextmanager
+        def session():
+            yield deco
+        return pause.sync_deco(self.conn, session)
+
+    def test_block_then_unblock(self):
+        deco = FakeBlockList()
+        self.assertFalse(self.sync(deco))  # nothing paused: no Deco login at all
+        pause.pause(self.conn, self.admin, TV, None)
+        self.assertTrue(pause.deco_out_of_step(self.conn))
+        self.assertTrue(self.sync(deco))
+        self.assertEqual(deco.list, {TV})
+        self.assertFalse(pause.deco_out_of_step(self.conn))
+        pause.resume(self.conn, self.admin, TV)
+        self.assertTrue(self.sync(deco))
+        self.assertEqual((deco.list, deco.calls), (set(), [("block", TV), ("unblock", TV)]))
+
+    def test_leaves_a_block_made_in_the_deco_app(self):
+        deco = FakeBlockList([TV])
+        pause.pause(self.conn, self.admin, TV, None)
+        self.sync(deco)
+        pause.resume(self.conn, self.admin, TV)
+        self.sync(deco)
+        self.assertEqual((deco.list, deco.calls), ({TV}, []))
+        self.assertFalse(pause.deco_out_of_step(self.conn))
+
+
+class BlockListTest(unittest.TestCase):
+    def test_requests(self):
+        sent = []
+
+        class Client:
+            def request(self, path, data):
+                sent.append((path, json.loads(data)))
+                return {"client_list": [{"mac": "00-11-22-33-44-55", "name": "VFY="}]}
+
+        deco = BlockList(Client())
+        self.assertEqual(deco.blocked(), {TV})
+        deco.block(TV, "TV")
+        deco.unblock(TV)
+        self.assertEqual({p for p, _ in sent}, {"admin/client?form=black_list"})
+        self.assertEqual([b for _, b in sent], [
+            {"operation": "list"},
+            {"operation": "block", "params": {"client_list": [{"mac": "00-11-22-33-44-55", "name": "VFY=", "client_type": "other"}]}},
+            {"operation": "unblock", "params": {"client_list": ["00-11-22-33-44-55"]}},
+        ])
+        Client.request = lambda self, path, data: {"client_list": {}}  # what an empty list looks like
+        self.assertEqual(BlockList(Client()).blocked(), set())
 
 
 if __name__ == "__main__":

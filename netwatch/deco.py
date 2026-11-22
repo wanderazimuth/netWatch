@@ -10,10 +10,12 @@ straight away only when the password file changes.
 
 from __future__ import annotations
 
+import base64
 import ipaddress
 import logging
 import os
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass
 
 from .info import DeviceInfo, usable_name
@@ -221,3 +223,53 @@ def traffic(url: str, password_file: str, samples: int = 4, gap: float = 5, slee
         except Exception:
             log.debug("Deco logout failed", exc_info=True)
     return peak
+
+
+class BlockList:
+    """The Deco's blocked clients: they stay on the network, but get no internet at all.
+
+    The same list as Blocked Clients in the Deco app, reached through the local web API's
+    black_list form (checked on a W7200). The Deco wants MACs uppercase with dashes, and
+    names base64-encoded.
+    """
+
+    def __init__(self, client):
+        self.client = client
+
+    def _send(self, payload: dict) -> dict:
+        from json import dumps
+
+        return self.client.request("admin/client?form=black_list", dumps(payload)) or {}
+
+    def blocked(self) -> set[str]:
+        items = self._send({"operation": "list"}).get("client_list")
+        return {normalize_mac(i["mac"]) for i in items if i.get("mac")} if isinstance(items, list) else set()
+
+    def block(self, mac: str, name: str) -> None:
+        entry = {"mac": deco_mac(mac), "name": base64.b64encode(name.encode()).decode(), "client_type": "other"}
+        self._send({"operation": "block", "params": {"client_list": [entry]}})
+
+    def unblock(self, mac: str) -> None:
+        self._send({"operation": "unblock", "params": {"client_list": [deco_mac(mac)]}})
+
+
+def deco_mac(mac: str) -> str:
+    return mac.replace(":", "-").upper()
+
+
+@contextmanager
+def block_list(url: str, password_file: str):
+    """A logged-in session on the Deco's block list, logged out afterwards."""
+    from tplinkrouterc6u import TPLinkDecoClient
+
+    with open(password_file) as f:
+        password = f.read().strip()
+    client = TPLinkDecoClient(url, password, timeout=15)
+    client.authorize()
+    try:
+        yield BlockList(client)
+    finally:
+        try:
+            client.logout()
+        except Exception:
+            log.debug("Deco logout failed", exc_info=True)

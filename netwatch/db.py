@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS devices (
     paused_until INTEGER,         -- when the pause ends; NULL = until resumed
     paused_restore TEXT,          -- JSON: the Pi-hole client entry paused_ip had before, to put back
     paused_by  INTEGER,           -- the schedule that paused it; NULL = paused by hand
+    deco_blocked INTEGER,         -- in the Deco's block list: 1 = NetWatch put it there, 2 = it already was; NULL = not
     pause_allowed INTEGER,        -- 1 = the dashboard may pause it (set with the PIN); NULL = no
     sched_skip_until INTEGER,     -- resumed by hand during a schedule: no scheduled pause before this
     ports_scanned INTEGER,        -- last port scan of this device; NULL = never scanned
@@ -112,6 +113,7 @@ ADDED_COLUMNS = {
     "paused_until": "INTEGER",
     "paused_restore": "TEXT",
     "paused_by": "INTEGER",
+    "deco_blocked": "INTEGER",
     "pause_allowed": "INTEGER",
     "sched_skip_until": "INTEGER",
     "ports_scanned": "INTEGER",

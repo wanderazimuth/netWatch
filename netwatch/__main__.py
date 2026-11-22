@@ -68,7 +68,8 @@ def scan_once(cfg: config_mod.Config, conn, deco: Deco | None = None) -> list[tr
 
 
 def maintain_pauses(cfg: config_mod.Config, conn) -> None:
-    """End expired pauses, follow paused devices to new IPs, and start and end scheduled pauses."""
+    """End expired pauses, follow paused devices to new IPs, start and end scheduled pauses,
+    and keep the Deco's block list in step."""
     if cfg.pihole is None:
         return
     session = lambda: PiholeClient(cfg.pihole.url, cfg.pihole.password, timeout=15).admin()
@@ -82,6 +83,26 @@ def maintain_pauses(cfg: config_mod.Config, conn) -> None:
         log.warning("updating paused devices in Pi-hole failed; will retry", exc_info=True)
     if changed:
         pause.touch(cfg.pihole.sync_trigger)
+    sync_deco(cfg, conn)
+
+
+# Failed Deco logins count toward its admin lockout, so a failing block-list sync backs off.
+deco_retry = {"at": 0.0, "failures": 0}
+
+
+def sync_deco(cfg: config_mod.Config, conn) -> None:
+    """Put paused devices in the Deco's block list, and take resumed ones out."""
+    if cfg.deco is None or time.monotonic() < deco_retry["at"] or not pause.deco_out_of_step(conn):
+        return
+    try:
+        pause.sync_deco(conn, lambda: deco_mod.block_list(cfg.deco.url, cfg.deco.password_file))
+    except Exception as e:
+        deco_retry["failures"] += 1
+        delay = min(60 * 2 ** deco_retry["failures"], deco_mod.MAX_BACKOFF)
+        deco_retry["at"] = time.monotonic() + delay
+        log.warning("Deco block list update failed (%s); next try in %d min", e, delay // 60)
+        return
+    deco_retry["failures"] = 0
 
 
 def cmd_run(cfg, conn, args) -> None:
@@ -185,7 +206,8 @@ def cmd_web(cfg, conn, args) -> None:
     from . import web
 
     conn.close()  # the server opens a connection per request
-    web.serve(cfg.db_path, args.host, args.port, cfg.ntfy_url, cfg.dashboard_url, cfg.pihole, cfg.offline_after)
+    web.serve(cfg.db_path, args.host, args.port, cfg.ntfy_url, cfg.dashboard_url, cfg.pihole, cfg.offline_after,
+              cfg.deco)
 
 
 def main() -> None:
