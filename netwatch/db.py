@@ -44,6 +44,7 @@ CREATE TABLE IF NOT EXISTS events (
     ip   TEXT
 );
 CREATE INDEX IF NOT EXISTS events_ts ON events(ts);
+CREATE INDEX IF NOT EXISTS events_ip_ts ON events(ip, ts);
 
 -- Every port a device has had open. A port is open now if last_seen equals
 -- the device's ports_scanned.

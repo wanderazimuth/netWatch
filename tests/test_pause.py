@@ -149,6 +149,17 @@ class PauseTest(unittest.TestCase):
         pause.resume(self.conn, admin, TV)
         self.assertEqual(admin.clients, {})
 
+    def test_stays_lifted_while_the_new_device_flips_between_addresses(self):
+        tv = "e4:75:dc:be:22:c2"
+        admin = FakeAdmin()
+        pause.pause(self.conn, admin, TV, None)
+        apply_scan(self.conn, [Sighting(tv, "192.168.0.20")], 5000, 600)
+        pause.maintain(self.conn, admin, 5000)
+        apply_scan(self.conn, [Sighting(tv, "192.168.0.107")], 5060, 600)  # and back again later
+        self.assertFalse(pause.needs_maintenance(self.conn, 5060))
+        self.assertFalse(pause.maintain(self.conn, admin, 5060))
+        self.assertEqual(admin.clients, {})
+
     def test_touch(self):
         fd, path = tempfile.mkstemp()
         os.close(fd)

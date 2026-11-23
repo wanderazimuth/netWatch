@@ -46,17 +46,24 @@ def _unpause_ip(admin, ip: str, restore: str | None) -> None:
         admin.delete_client(ip)
 
 
+# Another device has been seen at an address since the paused device was last seen: it has the
+# address now, or it moved there and on (the TV went back and forth between two, 2026-11-23).
+_TAKEN = ("EXISTS (SELECT 1 FROM devices o WHERE o.ip = {ip} AND o.mac != {mac} AND o.last_seen > {seen})"
+          " OR EXISTS (SELECT 1 FROM events e WHERE e.ip = {ip} AND e.mac != {mac} AND e.ts > {seen}"
+          " AND e.kind IN ('new', 'online', 'ip_change'))")
+TAKEN = "(" + _TAKEN.format(ip="devices.paused_ip", mac="devices.mac", seen="COALESCE(devices.last_seen, 0)") + ")"
+
+
 def _holder(conn: sqlite3.Connection, row, ip: str):
-    """Another device seen at ip more recently than row's device, or None."""
+    """The device that has taken ip from row's device (see _TAKEN), or None."""
+    if not conn.execute("SELECT " + _TAKEN.format(ip=":ip", mac=":mac", seen=":seen"),
+                        {"ip": ip, "mac": row["mac"], "seen": row["last_seen"] or 0}).fetchone()[0]:
+        return None
     return conn.execute(
-        "SELECT * FROM devices WHERE ip = ? AND mac != ? AND last_seen > ? ORDER BY last_seen DESC LIMIT 1",
-        (ip, row["mac"], row["last_seen"] or 0),
-    ).fetchone()
-
-
-# SQL for a paused device whose address another device has had since.
-TAKEN = ("EXISTS (SELECT 1 FROM devices o WHERE o.ip = devices.paused_ip AND o.mac != devices.mac"
-         " AND o.last_seen > COALESCE(devices.last_seen, 0))")
+        "SELECT * FROM devices WHERE mac = (SELECT mac FROM events WHERE ip = :ip AND mac != :mac AND ts > :seen"
+        " UNION ALL SELECT mac FROM devices WHERE ip = :ip AND mac != :mac AND last_seen > :seen LIMIT 1)",
+        {"ip": ip, "mac": row["mac"], "seen": row["last_seen"] or 0},
+    ).fetchone() or row
 
 
 def allowed(row, listed: frozenset[str]) -> bool:
