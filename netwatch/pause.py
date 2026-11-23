@@ -59,11 +59,12 @@ def _holder(conn: sqlite3.Connection, row, ip: str):
     if not conn.execute("SELECT " + _TAKEN.format(ip=":ip", mac=":mac", seen=":seen"),
                         {"ip": ip, "mac": row["mac"], "seen": row["last_seen"] or 0}).fetchone()[0]:
         return None
-    return conn.execute(
-        "SELECT * FROM devices WHERE mac = (SELECT mac FROM events WHERE ip = :ip AND mac != :mac AND ts > :seen"
-        " UNION ALL SELECT mac FROM devices WHERE ip = :ip AND mac != :mac AND last_seen > :seen LIMIT 1)",
-        {"ip": ip, "mac": row["mac"], "seen": row["last_seen"] or 0},
-    ).fetchone() or row
+    args = {"ip": ip, "mac": row["mac"], "seen": row["last_seen"] or 0}
+    return (conn.execute("SELECT * FROM devices WHERE ip = :ip AND mac != :mac AND last_seen > :seen"
+                         " ORDER BY last_seen DESC LIMIT 1", args).fetchone()
+            or conn.execute("SELECT d.* FROM events e JOIN devices d USING (mac) WHERE e.ip = :ip AND e.mac != :mac"
+                            " AND e.ts > :seen ORDER BY e.ts DESC LIMIT 1", args).fetchone()
+            or row)
 
 
 def allowed(row, listed: frozenset[str]) -> bool:
