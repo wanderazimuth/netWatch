@@ -6,6 +6,11 @@ address cached, can still get through until they look something up again.
 Devices are paused by IP, not MAC: the NAS replica runs Pi-hole in Docker and
 can't see MACs, but it does get our client entries through nebula-sync. If a
 paused device's IP changes, maintain() moves the pause to the new address.
+
+A paused device that goes quiet can lose its address to another device (a blocked speaker's
+DHCP lease ran out overnight and the TV got it, 2026-11-23). Whoever was seen at an address most
+recently owns it, so then the Pi-hole block on that address is lifted and pause_ip_taken set; the
+Deco block, by MAC, still holds the paused device. The block comes back if it reappears there.
 """
 
 from __future__ import annotations
@@ -41,6 +46,19 @@ def _unpause_ip(admin, ip: str, restore: str | None) -> None:
         admin.delete_client(ip)
 
 
+def _holder(conn: sqlite3.Connection, row, ip: str):
+    """Another device seen at ip more recently than row's device, or None."""
+    return conn.execute(
+        "SELECT * FROM devices WHERE ip = ? AND mac != ? AND last_seen > ? ORDER BY last_seen DESC LIMIT 1",
+        (ip, row["mac"], row["last_seen"] or 0),
+    ).fetchone()
+
+
+# SQL for a paused device whose address another device has had since.
+TAKEN = ("EXISTS (SELECT 1 FROM devices o WHERE o.ip = devices.paused_ip AND o.mac != devices.mac"
+         " AND o.last_seen > COALESCE(devices.last_seen, 0))")
+
+
 def allowed(row, listed: frozenset[str]) -> bool:
     """Devices you've said may be paused: in config.toml's pausable list, or allowed on the dashboard with the PIN."""
     return row["mac"] in listed or bool(row["pause_allowed"])
@@ -65,18 +83,24 @@ def pause(conn: sqlite3.Connection, admin, mac: str, until: int | None, by: int 
         raise LookupError("unknown device")
     if not row["ip"]:
         raise ValueError("no known IP address to pause")
-    if row["paused_ip"] == row["ip"]:
+    ip = row["ip"]
+    holder = _holder(conn, row, ip)
+    blocking = row["paused_ip"] is not None and not row["pause_ip_taken"]
+    if blocking and row["paused_ip"] == ip and holder is None:
         restore = row["paused_restore"]
     else:
-        if row["paused_ip"]:
+        if blocking:
             _unpause_ip(admin, row["paused_ip"], row["paused_restore"])
-        restore = _pause_ip(admin, row["ip"])
+        restore = None if holder is not None else _pause_ip(admin, ip)
     conn.execute(
-        "UPDATE devices SET paused_ip = ?, paused_until = ?, paused_restore = ?, paused_by = ? WHERE mac = ?",
-        (row["ip"], until, restore, by, mac),
+        "UPDATE devices SET paused_ip = ?, paused_until = ?, paused_restore = ?, paused_by = ?, pause_ip_taken = ?"
+        " WHERE mac = ?",
+        (ip, until, restore, by, 1 if holder is not None else None, mac),
     )
     conn.commit()
-    log.info("paused internet for %s (%s)%s", db.display_name(row), row["ip"], "" if until else " until resumed")
+    if holder is not None:
+        log.info("paused %s at the Deco only: %s now has %s", db.display_name(row), db.display_name(holder), ip)
+    log.info("paused internet for %s (%s)%s", db.display_name(row), ip, "" if until else " until resumed")
 
 
 def resume(conn: sqlite3.Connection, admin, mac: str) -> None:
@@ -84,30 +108,35 @@ def resume(conn: sqlite3.Connection, admin, mac: str) -> None:
     if row is None:
         raise LookupError("unknown device")
     if row["paused_ip"]:
-        _unpause_ip(admin, row["paused_ip"], row["paused_restore"])
+        if not row["pause_ip_taken"]:
+            _unpause_ip(admin, row["paused_ip"], row["paused_restore"])
         log.info("resumed internet for %s (%s)", db.display_name(row), row["paused_ip"])
-    conn.execute("UPDATE devices SET paused_ip = NULL, paused_until = NULL, paused_restore = NULL, paused_by = NULL"
-                 " WHERE mac = ?", (mac,))
+    conn.execute("UPDATE devices SET paused_ip = NULL, paused_until = NULL, paused_restore = NULL, paused_by = NULL,"
+                 " pause_ip_taken = NULL WHERE mac = ?", (mac,))
     conn.commit()
 
 
 def needs_maintenance(conn: sqlite3.Connection, now: int) -> bool:
-    """Cheap check so the scanner only logs in to Pi-hole when a pause has expired or moved IP."""
+    """Cheap check so the scanner only logs in to Pi-hole when a pause has expired, moved IP,
+    or lost its IP to another device (or got it back)."""
     return conn.execute(
         "SELECT 1 FROM devices WHERE paused_ip IS NOT NULL"
-        " AND ((paused_until IS NOT NULL AND paused_until <= ?) OR (ip IS NOT NULL AND ip != paused_ip)) LIMIT 1",
+        " AND ((paused_until IS NOT NULL AND paused_until <= ?) OR (ip IS NOT NULL AND ip != paused_ip)"
+        f" OR (pause_ip_taken IS NULL AND {TAKEN}) OR (pause_ip_taken IS NOT NULL AND NOT {TAKEN})) LIMIT 1",
         (now,),
     ).fetchone() is not None
 
 
 def maintain(conn: sqlite3.Connection, admin, now: int) -> bool:
-    """End expired pauses and follow paused devices to new IPs. Returns True if Pi-hole changed."""
+    """End expired pauses, follow paused devices to new IPs, and stop blocking an IP another
+    device has taken (or block it again once it's back). Returns True if Pi-hole changed."""
     changed = False
     for row in conn.execute("SELECT * FROM devices WHERE paused_ip IS NOT NULL").fetchall():
         if row["paused_until"] is not None and row["paused_until"] <= now:
             resume(conn, admin, row["mac"])
             changed = True
-        elif row["ip"] and row["ip"] != row["paused_ip"]:
+        elif row["ip"] and (row["ip"] != row["paused_ip"]
+                            or bool(row["pause_ip_taken"]) != (_holder(conn, row, row["ip"]) is not None)):
             pause(conn, admin, row["mac"], row["paused_until"], row["paused_by"])
             changed = True
     return changed
@@ -121,7 +150,8 @@ def reconcile(conn: sqlite3.Connection, admin) -> bool:
     by the NAS sync did, putting back a resumed device's entry (2026-11-22).
     """
     entries = admin.all_clients()
-    paused = {r["paused_ip"]: r for r in conn.execute("SELECT * FROM devices WHERE paused_ip IS NOT NULL")}
+    paused = {r["paused_ip"]: r for r in conn.execute(
+        "SELECT * FROM devices WHERE paused_ip IS NOT NULL AND pause_ip_taken IS NULL")}
     changed = False
     for client, entry in entries.items():
         if entry.get("comment") == COMMENT and client not in paused:

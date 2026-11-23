@@ -104,6 +104,51 @@ class PauseTest(unittest.TestCase):
         self.assertEqual(list(admin.clients), ["192.168.0.21"])
         self.assertEqual((self.row()["paused_ip"], self.row()["paused_until"]), ("192.168.0.21", None))
 
+    def test_lifts_block_when_another_device_takes_the_ip(self):
+        speaker, tv = "44:07:0b:91:43:7a", "e4:75:dc:be:22:c2"
+        apply_scan(self.conn, [Sighting(speaker, "192.168.0.107")], 1000, 600)
+        admin = FakeAdmin()
+        pause.pause(self.conn, admin, speaker, None)
+        self.assertIn("192.168.0.107", admin.clients)
+        # The speaker goes quiet and its lease runs out; the TV gets its address.
+        apply_scan(self.conn, [Sighting(tv, "192.168.0.107")], 5000, 600)
+        self.assertTrue(pause.needs_maintenance(self.conn, 5000))
+        self.assertTrue(pause.maintain(self.conn, admin, 5000))
+        self.assertEqual(admin.clients, {})
+        sp = self.conn.execute("SELECT * FROM devices WHERE mac = ?", (speaker,)).fetchone()
+        self.assertEqual((sp["paused_ip"], sp["pause_ip_taken"]), ("192.168.0.107", 1))  # still paused (Deco)
+        self.assertFalse(pause.needs_maintenance(self.conn, 5060))
+        self.assertFalse(pause.reconcile(self.conn, admin))  # and reconcile doesn't put it back
+        # The speaker comes back at a new address: blocked there.
+        apply_scan(self.conn, [Sighting(speaker, "192.168.0.130"), Sighting(tv, "192.168.0.107")], 6000, 600)
+        self.assertTrue(pause.maintain(self.conn, admin, 6000))
+        self.assertEqual(list(admin.clients), ["192.168.0.130"])
+        pause.resume(self.conn, admin, speaker)
+        self.assertEqual(admin.clients, {})
+
+    def test_reblocks_when_the_paused_device_reclaims_its_ip(self):
+        other = "00:11:22:33:44:66"
+        admin = FakeAdmin()
+        pause.pause(self.conn, admin, TV, None)
+        apply_scan(self.conn, [Sighting(other, "192.168.0.20")], 5000, 600)
+        pause.maintain(self.conn, admin, 5000)
+        self.assertEqual(admin.clients, {})
+        apply_scan(self.conn, [Sighting(TV, "192.168.0.20")], 6000, 600)
+        self.assertTrue(pause.needs_maintenance(self.conn, 6000))
+        self.assertTrue(pause.maintain(self.conn, admin, 6000))
+        self.assertEqual(list(admin.clients), ["192.168.0.20"])
+        self.assertIsNone(self.row()["pause_ip_taken"])
+
+    def test_wont_block_an_ip_someone_else_has_now(self):
+        # A scheduled pause of a device that's been away: its last-known IP is another device's now.
+        apply_scan(self.conn, [Sighting("00:11:22:33:44:66", "192.168.0.20")], 5000, 600)
+        admin = FakeAdmin()
+        pause.pause(self.conn, admin, TV, None, 3)
+        self.assertEqual(admin.clients, {})
+        self.assertEqual((self.row()["paused_ip"], self.row()["pause_ip_taken"]), ("192.168.0.20", 1))
+        pause.resume(self.conn, admin, TV)
+        self.assertEqual(admin.clients, {})
+
     def test_touch(self):
         fd, path = tempfile.mkstemp()
         os.close(fd)
